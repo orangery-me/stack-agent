@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package agent;
+
+service AgentService {
+  rpc AskAgent (AskAgentRequest) returns (AskAgentResponse);
+}
+
+message AskAgentRequest {
+  string message = 1;
+  string provider = 2;  // "openai" | "gemini"
+  string model = 3;     // "gpt-4o", "gemini-1.5-pro"
+}
+
+message AskAgentResponse {
+  string response = 1;
+}

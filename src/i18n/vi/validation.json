@@ -1,0 +1,28 @@
+{
+  "required": "{{field}} không được để trống",
+  "email": {
+    "invalid": "Email không hợp lệ",
+    "required": "Email không được để trống"
+  },
+  "password": {
+    "required": "Mật khẩu không được để trống",
+    "length": "Mật khẩu phải từ {{min}} đến {{max}} ký tự"
+  },
+  "phone": {
+    "required": "Số điện thoại không được để trống",
+    "invalid": "Số điện thoại chỉ được chứa số",
+    "length": "Số điện thoại phải có đúng {{length}} số"
+  },
+  "name": {
+    "required": "Tên không được để trống",
+    "length": "Tên phải từ {{min}} đến {{max}} ký tự"
+  },
+  "identity": {
+    "required": "Số CMND/CCCD không được để trống",
+    "invalid": "Số CMND/CCCD chỉ được chứa số",
+    "length": "Số CMND/CCCD phải từ {{min}} đến {{max}} số"
+  },
+  "token": {
+    "required": "Token không được để trống"
+  }
+}

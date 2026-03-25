@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  backend:
+    image: orangery/stack-app-backend:latest
+    container_name: ${APP_NAME:-stack-app}-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${APP_PORT:-8105}:8105"
+    volumes:
+      - /home/ubuntu/api/data:/app/data
+      - /home/ubuntu/api/uploads:/app/public/uploads
+      - /home/ubuntu/api/logs:/app/logs
+    networks:
+      - stack-network
+  #   depends_on:
+  #     - chat
+  # chat:
+  #   image: orangery/stack-chat-api:latest
+  #   container_name: stack-chat-api
+  #   networks:
+  #     - stack-network
+
+networks:
+  stack-network:

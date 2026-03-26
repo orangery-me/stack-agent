@@ -3,9 +3,24 @@ syntax = "proto3";
 package agent;
 
 service AgentService {
+  // Legacy single-shot endpoints (no session context)
   rpc AskAgent (AskAgentRequest) returns (AskAgentResponse);
   rpc AskAgentStream (AskAgentRequest) returns (stream AskAgentStreamChunk);
+
+  // Session management
+  rpc GetOrCreateActiveSession (UserRequest) returns (Session);
+  rpc ListSessions (UserRequest) returns (SessionList);
+  rpc CreateSession (CreateSessionRequest) returns (Session);
+
+  // Message history
+  rpc GetSessionMessages (GetSessionMessagesRequest) returns (MessageList);
+
+  // Send with session context
+  rpc SendMessage (SendMessageRequest) returns (SendMessageResponse);
+  rpc SendMessageStream (SendMessageRequest) returns (stream AskAgentStreamChunk);
 }
+
+// ---- Legacy ----
 
 message AskAgentRequest {
   string message = 1;
@@ -20,4 +35,66 @@ message AskAgentResponse {
 message AskAgentStreamChunk {
   string chunk = 1;
   bool done = 2;
+}
+
+// ---- Session ----
+
+message UserRequest {
+  string user_id = 1;
+}
+
+message CreateSessionRequest {
+  string user_id = 1;
+  string title = 2;
+}
+
+message Session {
+  string id = 1;
+  string user_id = 2;
+  string title = 3;
+  bool is_active = 4;
+  string created_at = 5;
+  string updated_at = 6;
+}
+
+message SessionList {
+  repeated Session sessions = 1;
+}
+
+// ---- Messages ----
+
+message GetSessionMessagesRequest {
+  string user_id = 1;
+  string session_id = 2;
+  int32 page = 3;
+  int32 size = 4;
+}
+
+message ChatMessage {
+  string id = 1;
+  string session_id = 2;
+  string role = 3;
+  string content = 4;
+  string created_at = 5;
+}
+
+message MessageList {
+  repeated ChatMessage messages = 1;
+  int32 total = 2;
+  bool has_more = 3;
+}
+
+// ---- Send ----
+
+message SendMessageRequest {
+  string user_id = 1;
+  string session_id = 2;
+  string message = 3;
+  string provider = 4;
+  string model = 5;
+}
+
+message SendMessageResponse {
+  string response = 1;
+  ChatMessage assistant_message = 2;
 }

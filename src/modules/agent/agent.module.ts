@@ -4,9 +4,10 @@ import { AgentService, AI_PROVIDER_REGISTRY, AiProviderRegistry } from './agent.
 import { AgentGrpcController } from './agent-grpc.controller';
 import { OpenaiProvider } from './ai-providers/openai/openai-provider';
 import { GeminiProvider } from './ai-providers/gemini/gemini-provider';
+import { AiChatModule } from '../ai-chat/ai-chat.module';
 
 @Module({
-  imports: [ConfigModule],
+  imports: [ConfigModule, AiChatModule],
   controllers: [AgentGrpcController],
   providers: [
     AgentService,

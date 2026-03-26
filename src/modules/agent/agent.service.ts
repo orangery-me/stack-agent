@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { ConfigService } from '@nestjs/config';
 import { AiProvider, AiProviderMessage } from './ai-providers/ai-provider.interface';
+import { AiChatSessionService } from '../ai-chat/ai-chat-session.service';
 
 export const AI_PROVIDER_TOKEN = 'AI_PROVIDER';
 export const AI_PROVIDER_REGISTRY = 'AI_PROVIDER_REGISTRY';
@@ -17,6 +18,8 @@ export interface AskAgentInput {
   message: string;
   provider?: string;
   model?: string;
+  /** If provided, messages from this session will be used as context */
+  sessionId?: string;
 }
 
 export interface AskAgentOutput {
@@ -33,18 +36,33 @@ export class AgentService {
   constructor(
     @Inject(AI_PROVIDER_REGISTRY)
     private readonly providerRegistry: AiProviderRegistry,
-    private readonly config: ConfigService
+    private readonly config: ConfigService,
+    private readonly aiChatSessionService: AiChatSessionService,
   ) {}
 
-  async askAgent(input: AskAgentInput): Promise<AskAgentOutput> {
+  private resolveProvider(providerName?: string): { provider: AiProvider; name: AgentProviderName } {
     const defaultProvider = this.config.get<string>('AI_PROVIDER', 'openai') as AgentProviderName;
-    const providerName = (input.provider ?? defaultProvider) as AgentProviderName;
-    const provider = this.providerRegistry[providerName];
+    const name = ((providerName ?? defaultProvider) as AgentProviderName);
+    const provider = this.providerRegistry[name];
     if (!provider) {
-      throw new Error(`Unknown provider: ${input.provider}. Use "openai" or "gemini".`);
+      throw new Error(`Unknown provider: "${providerName}". Use "openai" or "gemini".`);
     }
+    return { provider, name };
+  }
 
-    const messages: AiProviderMessage[] = [{ role: 'user', content: input.message }];
+  async askAgent(input: AskAgentInput): Promise<AskAgentOutput> {
+    const { provider } = this.resolveProvider(input.provider);
+
+    let messages: AiProviderMessage[];
+    if (input.sessionId) {
+      messages = await this.aiChatSessionService.buildContextMessages(input.sessionId);
+      // Append the new user message (not yet saved — it was saved before calling this)
+      if (messages.length === 0 || messages[messages.length - 1]?.content !== input.message) {
+        messages.push({ role: 'user', content: input.message });
+      }
+    } else {
+      messages = [{ role: 'user', content: input.message }];
+    }
 
     const result = await provider.chat(messages, {
       model: input.model,
@@ -60,43 +78,46 @@ export class AgentService {
 
   askAgentStream(input: AskAgentInput): Observable<AskAgentStreamChunk> {
     return new Observable(subscriber => {
-      const defaultProvider = this.config.get<string>('AI_PROVIDER', 'openai') as AgentProviderName;
-      const providerName = (input.provider ?? defaultProvider) as AgentProviderName;
-      const provider = this.providerRegistry[providerName];
-
-      if (!provider) {
-        subscriber.error(new Error(`Unknown provider: "${providerName}". Use "openai" or "gemini".`));
-        return;
-      }
+      const { provider } = this.resolveProvider(input.provider);
 
       if (!provider.chatStream) {
-        subscriber.error(new Error(`Provider "${providerName}" does not support streaming.`));
+        subscriber.error(new Error(`Provider does not support streaming.`));
         return;
       }
 
-      const messages: AiProviderMessage[] = [{ role: 'user', content: input.message }];
+      (async () => {
+        let messages: AiProviderMessage[];
+        if (input.sessionId) {
+          messages = await this.aiChatSessionService.buildContextMessages(input.sessionId);
+          if (messages.length === 0 || messages[messages.length - 1]?.content !== input.message) {
+            messages.push({ role: 'user', content: input.message });
+          }
+        } else {
+          messages = [{ role: 'user', content: input.message }];
+        }
 
-      const emitter = provider.chatStream(messages, {
-        model: input.model,
-        temperature: 0.7,
-      });
+        const emitter = provider.chatStream!(messages, {
+          model: input.model,
+          temperature: 0.7,
+        });
 
-      const onToken = (token: string) => subscriber.next({ chunk: token, done: false });
-      const onEnd = () => {
-        subscriber.next({ chunk: '', done: true });
-        subscriber.complete();
-      };
-      const onError = (err: Error) => subscriber.error(err);
+        const onToken = (token: string) => subscriber.next({ chunk: token, done: false });
+        const onEnd = () => {
+          subscriber.next({ chunk: '', done: true });
+          subscriber.complete();
+        };
+        const onError = (err: Error) => subscriber.error(err);
 
-      emitter.on('token', onToken);
-      emitter.on('end', onEnd);
-      emitter.on('error', onError);
+        emitter.on('token', onToken);
+        emitter.on('end', onEnd);
+        emitter.on('error', onError);
 
-      return () => {
-        emitter.removeListener('token', onToken);
-        emitter.removeListener('end', onEnd);
-        emitter.removeListener('error', onError);
-      };
+        subscriber.add(() => {
+          emitter.removeListener('token', onToken);
+          emitter.removeListener('end', onEnd);
+          emitter.removeListener('error', onError);
+        });
+      })().catch(err => subscriber.error(err));
     });
   }
 }

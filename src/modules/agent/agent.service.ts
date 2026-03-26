@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { Observable } from 'rxjs';
 import { ConfigService } from '@nestjs/config';
 import { AiProvider, AiProviderMessage } from './ai-providers/ai-provider.interface';
 
@@ -20,6 +21,11 @@ export interface AskAgentInput {
 
 export interface AskAgentOutput {
   response: string;
+}
+
+export interface AskAgentStreamChunk {
+  chunk: string;
+  done: boolean;
 }
 
 @Injectable()
@@ -50,5 +56,47 @@ export class AgentService {
     const response = lastMessage?.role === 'assistant' || lastMessage?.role === 'model' ? lastMessage.content : '';
 
     return { response: response || '(No response from AI)' };
+  }
+
+  askAgentStream(input: AskAgentInput): Observable<AskAgentStreamChunk> {
+    return new Observable(subscriber => {
+      const defaultProvider = this.config.get<string>('AI_PROVIDER', 'openai') as AgentProviderName;
+      const providerName = (input.provider ?? defaultProvider) as AgentProviderName;
+      const provider = this.providerRegistry[providerName];
+
+      if (!provider) {
+        subscriber.error(new Error(`Unknown provider: "${providerName}". Use "openai" or "gemini".`));
+        return;
+      }
+
+      if (!provider.chatStream) {
+        subscriber.error(new Error(`Provider "${providerName}" does not support streaming.`));
+        return;
+      }
+
+      const messages: AiProviderMessage[] = [{ role: 'user', content: input.message }];
+
+      const emitter = provider.chatStream(messages, {
+        model: input.model,
+        temperature: 0.7,
+      });
+
+      const onToken = (token: string) => subscriber.next({ chunk: token, done: false });
+      const onEnd = () => {
+        subscriber.next({ chunk: '', done: true });
+        subscriber.complete();
+      };
+      const onError = (err: Error) => subscriber.error(err);
+
+      emitter.on('token', onToken);
+      emitter.on('end', onEnd);
+      emitter.on('error', onError);
+
+      return () => {
+        emitter.removeListener('token', onToken);
+        emitter.removeListener('end', onEnd);
+        emitter.removeListener('error', onError);
+      };
+    });
   }
 }

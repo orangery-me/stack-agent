@@ -4,14 +4,20 @@ package agent;
 
 service AgentService {
   rpc AskAgent (AskAgentRequest) returns (AskAgentResponse);
+  rpc AskAgentStream (AskAgentRequest) returns (stream AskAgentStreamChunk);
 }
 
 message AskAgentRequest {
   string message = 1;
   string provider = 2;  // "openai" | "gemini"
-  string model = 3;     // "gpt-4o", "gemini-1.5-pro"
+  string model = 3;     // e.g. "gpt-4o", "gemini-1.5-pro"
 }
 
 message AskAgentResponse {
   string response = 1;
+}
+
+message AskAgentStreamChunk {
+  string chunk = 1;
+  bool done = 2;
 }

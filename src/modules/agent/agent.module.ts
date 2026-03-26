@@ -13,7 +13,7 @@ import { GeminiProvider } from './ai-providers/gemini/gemini-provider';
     {
       provide: 'OPENAI_PROVIDER',
       useFactory: (config: ConfigService) => {
-        const model = config.get<string>('OPENAI_MODEL', 'gpt-4');
+        const model = config.get<string>('OPENAI_MODEL', 'gpt-5.3-codex');
         return new OpenaiProvider(model);
       },
       inject: [ConfigService],

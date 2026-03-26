@@ -1,7 +1,8 @@
 import { Controller } from '@nestjs/common';
 import { GrpcMethod, RpcException } from '@nestjs/microservices';
+import { Observable } from 'rxjs';
 import { status as GrpcStatus } from '@grpc/grpc-js';
-import { AgentService } from './agent.service';
+import { AgentService, AskAgentStreamChunk } from './agent.service';
 
 interface AskAgentRequest {
   message: string;
@@ -41,5 +42,21 @@ export class AgentGrpcController {
         message,
       });
     }
+  }
+
+  @GrpcMethod('AgentService', 'AskAgentStream')
+  askAgentStream(data: AskAgentRequest): Observable<AskAgentStreamChunk> {
+    if (!data?.message?.trim()) {
+      throw new RpcException({
+        code: GrpcStatus.INVALID_ARGUMENT,
+        message: 'message is required',
+      });
+    }
+
+    return this.agentService.askAgentStream({
+      message: data.message.trim(),
+      provider: data.provider?.trim() || undefined,
+      model: data.model?.trim() || undefined,
+    });
   }
 }

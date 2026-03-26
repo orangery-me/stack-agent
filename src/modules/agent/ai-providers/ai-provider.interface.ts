@@ -15,4 +15,5 @@ export interface AiProvider {
   readonly model: string;
 
   chat(messages: AiProviderMessage[], options: AiProviderOptions): Promise<AiProviderMessage[]>;
+  chatStream?(messages: AiProviderMessage[], options: AiProviderOptions): NodeJS.EventEmitter;
 }

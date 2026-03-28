@@ -26,6 +26,12 @@ interface CreateSessionRequest {
   title?: string;
 }
 
+interface UpdateSessionRequest {
+  userId: string;
+  sessionId: string;
+  title: string;
+}
+
 interface GetSessionMessagesRequest {
   userId: string;
   sessionId: string;
@@ -45,10 +51,7 @@ interface SendMessageRequest {
 
 @Controller()
 export class AgentGrpcController {
-  constructor(
-    private readonly agentService: AgentService,
-    private readonly sessionService: AiChatSessionService,
-  ) {}
+  constructor(private readonly agentService: AgentService, private readonly sessionService: AiChatSessionService) {}
 
   // ---- Legacy ----
 
@@ -100,10 +103,24 @@ export class AgentGrpcController {
     this.requireUserId(data.userId);
     try {
       const sessions = await this.sessionService.listSessions(data.userId);
-      return { sessions: sessions.map(s => this.sessionService.serializeSession(s)) };
+      return { sessions: sessions.map((s) => this.sessionService.serializeSession(s)) };
     } catch (err: any) {
       throw new RpcException({ code: GrpcStatus.INTERNAL, message: err?.message });
     }
+  }
+
+  @GrpcMethod('AgentService', 'UpdateSession')
+  async updateSession(data: UpdateSessionRequest) {
+    this.requireUserId(data.userId);
+    this.requireSessionId(data.sessionId);
+    if (!data.title?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'title is required' });
+    }
+    const session = await this.sessionService.updateSessionTitle(data.userId, data.sessionId, data.title);
+    if (!session) {
+      throw new RpcException({ code: GrpcStatus.NOT_FOUND, message: 'Session not found' });
+    }
+    return this.sessionService.serializeSession(session);
   }
 
   @GrpcMethod('AgentService', 'CreateSession')
@@ -131,7 +148,7 @@ export class AgentGrpcController {
     }
     const result = await this.sessionService.getMessages(data.sessionId, data.page || 1, data.size || 50);
     return {
-      messages: result.messages.map(m => this.sessionService.serializeMessage(m)),
+      messages: result.messages.map((m) => this.sessionService.serializeMessage(m)),
       total: result.total,
       hasMore: result.hasMore,
     };
@@ -182,7 +199,7 @@ export class AgentGrpcController {
       throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'message is required' });
     }
 
-    return new Observable(subscriber => {
+    return new Observable((subscriber) => {
       (async () => {
         const session = await this.sessionService.getSessionForUser(data.userId, data.sessionId);
         if (!session) {
@@ -218,7 +235,7 @@ export class AgentGrpcController {
           },
           error: (err) => subscriber.error(err),
         });
-      })().catch(err => subscriber.error(err));
+      })().catch((err) => subscriber.error(err));
     });
   }
 

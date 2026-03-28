@@ -14,7 +14,7 @@ export class AiChatSessionService {
     private readonly sessionModel: Model<AiChatSessionDocument>,
 
     @InjectModel(AiChatMessage.name)
-    private readonly messageModel: Model<AiChatMessageDocument>,
+    private readonly messageModel: Model<AiChatMessageDocument>
   ) {}
 
   async getOrCreateActiveSession(userId: string): Promise<AiChatSessionDocument> {
@@ -25,11 +25,7 @@ export class AiChatSessionService {
   }
 
   async listSessions(userId: string): Promise<AiChatSessionDocument[]> {
-    return this.sessionModel
-      .find({ userId })
-      .sort({ createdAt: -1 })
-      .limit(50)
-      .exec();
+    return this.sessionModel.find({ userId }).sort({ createdAt: -1 }).limit(50).exec();
   }
 
   async createSession(userId: string, title = 'New chat'): Promise<AiChatSessionDocument> {
@@ -41,17 +37,12 @@ export class AiChatSessionService {
   async getMessages(
     sessionId: string,
     page = 1,
-    size = 50,
+    size = 50
   ): Promise<{ messages: AiChatMessageDocument[]; total: number; hasMore: boolean }> {
     const id = new Types.ObjectId(sessionId);
     const skip = (page - 1) * size;
     const [messages, total] = await Promise.all([
-      this.messageModel
-        .find({ sessionId: id })
-        .sort({ createdAt: 1 })
-        .skip(skip)
-        .limit(size)
-        .exec(),
+      this.messageModel.find({ sessionId: id }).sort({ createdAt: 1 }).skip(skip).limit(size).exec(),
       this.messageModel.countDocuments({ sessionId: id }),
     ]);
     return { messages, total, hasMore: skip + messages.length < total };
@@ -93,6 +84,16 @@ export class AiChatSessionService {
 
   async getSessionForUser(userId: string, sessionId: string): Promise<AiChatSessionDocument | null> {
     return this.sessionModel.findOne({ _id: new Types.ObjectId(sessionId), userId }).exec();
+  }
+
+  async updateSessionTitle(userId: string, sessionId: string, title: string): Promise<AiChatSessionDocument | null> {
+    return this.sessionModel
+      .findOneAndUpdate(
+        { _id: new Types.ObjectId(sessionId), userId },
+        { title: title.trim().slice(0, 100) },
+        { new: true }
+      )
+      .exec();
   }
 
   serializeSession(session: AiChatSessionDocument) {

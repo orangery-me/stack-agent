@@ -15,6 +15,9 @@ service AgentService {
   // Message history
   rpc GetSessionMessages (GetSessionMessagesRequest) returns (MessageList);
 
+  // Update session metadata
+  rpc UpdateSession (UpdateSessionRequest) returns (Session);
+
   // Send with session context
   rpc SendMessage (SendMessageRequest) returns (SendMessageResponse);
   rpc SendMessageStream (SendMessageRequest) returns (stream AskAgentStreamChunk);
@@ -46,6 +49,12 @@ message UserRequest {
 message CreateSessionRequest {
   string user_id = 1;
   string title = 2;
+}
+
+message UpdateSessionRequest {
+  string user_id = 1;
+  string session_id = 2;
+  string title = 3;
 }
 
 message Session {

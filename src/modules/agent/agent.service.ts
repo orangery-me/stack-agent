@@ -22,6 +22,13 @@ export interface AskAgentInput {
   sessionId?: string;
 }
 
+export interface CanvasWriteInput {
+  canvasContent: string;
+  userRequest: string;
+  provider?: string;
+  model?: string;
+}
+
 export interface AskAgentOutput {
   response: string;
 }
@@ -74,6 +81,54 @@ export class AgentService {
     const response = lastMessage?.role === 'assistant' || lastMessage?.role === 'model' ? lastMessage.content : '';
 
     return { response: response || '(No response from AI)' };
+  }
+
+  canvasWriteStream(input: CanvasWriteInput): Observable<AskAgentStreamChunk> {
+    return new Observable(subscriber => {
+      const { provider } = this.resolveProvider(input.provider);
+
+      if (!provider.chatStream) {
+        subscriber.error(new Error('Provider does not support streaming.'));
+        return;
+      }
+
+      const canvasContext = input.canvasContent?.trim()
+        ? `Dưới đây là nội dung hiện tại của canvas:\n---\n${input.canvasContent}\n---\n`
+        : 'Canvas hiện tại còn trống.\n';
+
+      const systemContent =
+        `Bạn là AI writing assistant tích hợp trong canvas editor. ` +
+        canvasContext +
+        `Hãy viết nội dung bổ sung theo yêu cầu của user. ` +
+        `Trả về plain text, không dùng markdown heading, không thêm lời dẫn hay giải thích — chỉ trả về nội dung cần thêm vào.`;
+
+      const messages: AiProviderMessage[] = [
+        { role: 'system', content: systemContent },
+        { role: 'user', content: input.userRequest },
+      ];
+
+      const emitter = provider.chatStream!(messages, {
+        model: input.model,
+        temperature: 0.7,
+      });
+
+      const onToken = (token: string) => subscriber.next({ chunk: token, done: false });
+      const onEnd = () => {
+        subscriber.next({ chunk: '', done: true });
+        subscriber.complete();
+      };
+      const onError = (err: Error) => subscriber.error(err);
+
+      emitter.on('token', onToken);
+      emitter.on('end', onEnd);
+      emitter.on('error', onError);
+
+      subscriber.add(() => {
+        emitter.removeListener('token', onToken);
+        emitter.removeListener('end', onEnd);
+        emitter.removeListener('error', onError);
+      });
+    });
   }
 
   askAgentStream(input: AskAgentInput): Observable<AskAgentStreamChunk> {

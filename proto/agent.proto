@@ -21,6 +21,9 @@ service AgentService {
   // Send with session context
   rpc SendMessage (SendMessageRequest) returns (SendMessageResponse);
   rpc SendMessageStream (SendMessageRequest) returns (stream AskAgentStreamChunk);
+
+  // Canvas AI Writer
+  rpc CanvasWrite (CanvasWriteRequest) returns (stream AskAgentStreamChunk);
 }
 
 // ---- Legacy ----
@@ -106,4 +109,14 @@ message SendMessageRequest {
 message SendMessageResponse {
   string response = 1;
   ChatMessage assistant_message = 2;
+}
+
+// ---- Canvas Write ----
+
+message CanvasWriteRequest {
+  string canvas_id = 1;
+  string canvas_content = 2;
+  string user_request = 3;
+  string provider = 4;
+  string model = 5;
 }

@@ -1,5 +1,5 @@
 import { Controller } from '@nestjs/common';
-import { GrpcMethod, RpcException, GrpcStreamMethod } from '@nestjs/microservices';
+import { GrpcMethod, RpcException } from '@nestjs/microservices';
 import { Observable } from 'rxjs';
 import { status as GrpcStatus } from '@grpc/grpc-js';
 import { AgentService, AskAgentStreamChunk } from './agent.service';
@@ -43,6 +43,14 @@ interface SendMessageRequest {
   userId: string;
   sessionId: string;
   message: string;
+  provider?: string;
+  model?: string;
+}
+
+interface CanvasWriteRequest {
+  canvasId?: string;
+  canvasContent: string;
+  userRequest: string;
   provider?: string;
   model?: string;
 }
@@ -236,6 +244,21 @@ export class AgentGrpcController {
           error: (err) => subscriber.error(err),
         });
       })().catch((err) => subscriber.error(err));
+    });
+  }
+
+  // ---- Canvas Write ----
+
+  @GrpcMethod('AgentService', 'CanvasWrite')
+  canvasWrite(data: CanvasWriteRequest): Observable<AskAgentStreamChunk> {
+    if (!data?.userRequest?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'userRequest is required' });
+    }
+    return this.agentService.canvasWriteStream({
+      canvasContent: data.canvasContent ?? '',
+      userRequest: data.userRequest.trim(),
+      provider: data.provider?.trim() || undefined,
+      model: data.model?.trim() || undefined,
     });
   }
 

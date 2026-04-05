@@ -27,6 +27,8 @@ export interface CanvasWriteInput {
   userRequest: string;
   provider?: string;
   model?: string;
+  selectedText?: string;
+  editMode?: 'replace' | 'append';
 }
 
 export interface AskAgentOutput {
@@ -45,7 +47,7 @@ export class AgentService {
     private readonly providerRegistry: AiProviderRegistry,
     private readonly config: ConfigService,
     private readonly aiChatSessionService: AiChatSessionService,
-  ) {}
+  ) { }
 
   private resolveProvider(providerName?: string): { provider: AiProvider; name: AgentProviderName } {
     const defaultProvider = this.config.get<string>('AI_PROVIDER', 'openai') as AgentProviderName;

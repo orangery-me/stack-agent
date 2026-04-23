@@ -24,6 +24,8 @@ service AgentService {
 
   // Canvas AI Writer
   rpc CanvasWrite (CanvasWriteRequest) returns (stream AskAgentStreamChunk);
+  rpc CanvasSessionMessageStream (CanvasSessionMessageRequest) returns (stream AskAgentStreamChunk);
+  rpc CanvasApplyAction (CanvasApplyActionRequest) returns (CanvasApplyActionResponse);
 }
 
 // ---- Legacy ----
@@ -119,4 +121,26 @@ message CanvasWriteRequest {
   string user_request = 3;
   string provider = 4;
   string model = 5;
+}
+
+message CanvasSessionMessageRequest {
+  string user_id = 1;
+  string session_id = 2;
+  string canvas_id = 3;
+  string canvas_content = 4;
+  string message = 5;
+  string provider = 6;
+  string model = 7;
+}
+
+message CanvasApplyActionRequest {
+  string canvas_id = 1;
+  string action_name = 2;
+  string action_args_json = 3;
+}
+
+message CanvasApplyActionResponse {
+  bool ok = 1;
+  string result_json = 2;
+  string error = 3;
 }

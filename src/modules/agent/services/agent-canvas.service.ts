@@ -1,0 +1,406 @@
+import { Injectable } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { AiChatSessionService } from '../../ai-chat/ai-chat-session.service';
+import { McpClientService } from '../../mcp-client/mcp-client.service';
+import { AiProviderMessage, ToolDefinition } from '../ai-providers/ai-provider.interface';
+import {
+  buildCanvasLegacyWritePrompt,
+  buildCanvasSessionPreviewPrompt,
+  buildCanvasWriteSystemPrompt,
+} from '../prompts/agent-canvas.prompts';
+import { AskAgentStreamChunk, CanvasSessionPreviewInput, CanvasWriteInput } from '../shared/agent.types';
+import { createAsyncStream, pipeTextEmitterToSubscriber } from '../utils/agent-stream.utils';
+import { AgentProviderService } from './agent-provider.service';
+
+interface ParsedCanvasAction {
+  id?: string;
+  name: string;
+  arguments?: Record<string, unknown>;
+  status?: string;
+}
+
+type NormalizedCanvasAction = {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  status: string;
+};
+
+const CANVAS_TOOLS: ToolDefinition[] = [
+  {
+    name: 'insert_canvas_block',
+    description: 'Insert a new block into the canvas after the given index. Use after_index = -1 to prepend.',
+    parameters: {
+      type: 'object',
+      properties: {
+        canvas_id: { type: 'string', description: 'The canvas document ID' },
+        content: { type: 'string', description: 'Text content of the new block' },
+        type: {
+          type: 'string',
+          enum: ['paragraph', 'heading', 'bulletList', 'orderedList', 'blockquote', 'codeBlock'],
+          description: 'Block node type (default: paragraph)',
+        },
+        after_index: {
+          type: 'number',
+          description: 'Index of the block to insert after. Use -1 to prepend.',
+        },
+      },
+      required: ['canvas_id', 'content'],
+    },
+  },
+  {
+    name: 'update_canvas_block',
+    description: 'Replace the text content of an existing block at the given index.',
+    parameters: {
+      type: 'object',
+      properties: {
+        canvas_id: { type: 'string', description: 'The canvas document ID' },
+        index: { type: 'number', description: 'Zero-based index of the block to update' },
+        content: { type: 'string', description: 'New text content for the block' },
+      },
+      required: ['canvas_id', 'index', 'content'],
+    },
+  },
+  {
+    name: 'delete_canvas_block',
+    description: 'Delete the block at the given index from the canvas.',
+    parameters: {
+      type: 'object',
+      properties: {
+        canvas_id: { type: 'string', description: 'The canvas document ID' },
+        index: { type: 'number', description: 'Zero-based index of the block to delete' },
+      },
+      required: ['canvas_id', 'index'],
+    },
+  },
+  {
+    name: 'reorder_canvas_blocks',
+    description: 'Move a block from one position to another in the canvas.',
+    parameters: {
+      type: 'object',
+      properties: {
+        canvas_id: { type: 'string', description: 'The canvas document ID' },
+        from_index: { type: 'number', description: 'Zero-based index of the block to move' },
+        to_index: { type: 'number', description: 'Zero-based target index' },
+      },
+      required: ['canvas_id', 'from_index', 'to_index'],
+    },
+  },
+];
+
+@Injectable()
+export class AgentCanvasService {
+  constructor(
+    private readonly providerService: AgentProviderService,
+    private readonly aiChatSessionService: AiChatSessionService,
+    private readonly mcpClient: McpClientService
+  ) {}
+
+  canvasWriteStream(input: CanvasWriteInput): Observable<AskAgentStreamChunk> {
+    return createAsyncStream(async (subscriber) => {
+      const { provider } = this.providerService.resolveProvider(input.provider);
+
+      if (!provider.chatWithTools) {
+        subscriber.next({
+          chunk: '[fallback] Provider does not support tool calling, using streaming text mode.\n',
+          done: false,
+        });
+
+        const legacySubscription = this.canvasWriteStreamLegacy(input).subscribe(subscriber);
+        subscriber.add(legacySubscription);
+        return;
+      }
+
+      subscriber.next({ chunk: 'Reading canvas structure...', done: false });
+      const blocksJson = await this.buildCanvasSnapshot(input.canvasId, input.canvasContent, 'canvasWriteStream');
+
+      const messages: AiProviderMessage[] = [
+        {
+          role: 'system',
+          content: buildCanvasWriteSystemPrompt({
+            canvasId: input.canvasId,
+            blocksJson,
+          }),
+        },
+        { role: 'user', content: input.userRequest },
+      ];
+
+      subscriber.next({ chunk: 'AI is analyzing the request...', done: false });
+
+      const maxToolRounds = 10;
+      const toolHistory: AiProviderMessage[] = [...messages];
+
+      for (let round = 0; round < maxToolRounds; round++) {
+        const result = await provider.chatWithTools(toolHistory, CANVAS_TOOLS, {
+          model: input.model,
+          temperature: 0.3,
+        });
+
+        if (!result.toolCalls?.length) {
+          if (result.content) {
+            subscriber.next({ chunk: `\n${result.content}`, done: false });
+          }
+          break;
+        }
+
+        for (const toolCall of result.toolCalls) {
+          subscriber.next({
+            chunk: `[tool] ${toolCall.name}(${JSON.stringify(toolCall.arguments)})`,
+            done: false,
+          });
+
+          try {
+            const toolResult = await this.executeCanvasTool(toolCall.name, toolCall.arguments ?? {});
+            toolHistory.push({
+              role: 'assistant',
+              content: `Tool call: ${toolCall.name}\nArguments: ${JSON.stringify(toolCall.arguments)}\nResult: ${JSON.stringify(toolResult)}`,
+            });
+            subscriber.next({ chunk: ' ✓', done: false });
+          } catch (error: any) {
+            const message = error?.message ?? 'Tool execution failed';
+            toolHistory.push({
+              role: 'assistant',
+              content: `Tool call: ${toolCall.name} failed: ${message}`,
+            });
+            subscriber.next({ chunk: ` ✗ ${message}`, done: false });
+          }
+        }
+
+        toolHistory.push({
+          role: 'user',
+          content: 'Continue if there are more changes, or confirm completion.',
+        });
+      }
+
+      subscriber.next({ chunk: '', done: true });
+      subscriber.complete();
+    });
+  }
+
+  canvasSessionPreviewStream(input: CanvasSessionPreviewInput): Observable<AskAgentStreamChunk> {
+    return createAsyncStream(async (subscriber) => {
+      const { provider } = this.providerService.resolveProvider(input.provider);
+
+      if (!provider.chatWithTools) {
+        subscriber.next(this.createEventChunk('status', { message: 'Provider does not support tool-calling mode.' }));
+        subscriber.next(
+          this.createEventChunk('assistant', {
+            content:
+              'The current provider does not support the action proposal mode for canvas. Please change provider/model.',
+          })
+        );
+        subscriber.next({ chunk: '', done: true });
+        subscriber.complete();
+        return;
+      }
+
+      subscriber.next(this.createEventChunk('status', { message: 'Reading canvas structure...' }));
+      const blocksJson = await this.buildCanvasSnapshot(
+        input.canvasId,
+        input.canvasContent,
+        'canvasSessionPreviewStream'
+      );
+
+      const history = await this.aiChatSessionService.buildContextMessages(input.sessionId);
+      const historyWithoutTail = history.slice(0, Math.max(history.length - 1, 0));
+      const messages: AiProviderMessage[] = [
+        {
+          role: 'system',
+          content: buildCanvasSessionPreviewPrompt({
+            canvasId: input.canvasId,
+            blocksJson,
+          }),
+        },
+        ...historyWithoutTail
+          .filter((message) => message.role !== 'system')
+          .map((message) => ({
+            ...message,
+            content: message.role === 'assistant' ? this.stripActionTrace(message.content) : message.content,
+          })),
+        { role: 'user', content: input.userRequest },
+      ];
+
+      subscriber.next(this.createEventChunk('status', { message: 'AI is analyzing the request...' }));
+
+      const result = await provider.chatWithTools(messages, CANVAS_TOOLS, {
+        model: input.model,
+        temperature: 0.2,
+      });
+
+      const fallbackParsed = this.extractActionsFromContent(result.content);
+      const actionSeed =
+        result.toolCalls && result.toolCalls.length > 0
+          ? result.toolCalls.map((toolCall, index) => ({
+              id: `${Date.now()}-${index}`,
+              name: toolCall.name,
+              arguments: toolCall.arguments ?? {},
+              status: 'pending',
+            }))
+          : fallbackParsed.actions;
+
+      const actions = actionSeed.map((action, index) => ({
+        id: action.id || `${Date.now()}-${index}`,
+        name: action.name,
+        arguments: action.arguments ?? {},
+        status: action.status || 'pending',
+      }));
+
+      if (actions.length > 0) {
+        subscriber.next(this.createEventChunk('actions', { actions }));
+      }
+
+      const summary =
+        this.stripActionTrace(fallbackParsed.summary || result.content || '') ||
+        (actions.length > 0
+          ? `I have prepared ${actions.length} proposed changes. You can Accept/Reject each action.`
+          : 'I did not find any changes that are suitable to propose on this canvas.');
+
+      subscriber.next(this.createEventChunk('assistant', { content: summary }));
+      subscriber.next({ chunk: '', done: true });
+      subscriber.complete();
+    });
+  }
+
+  async applyCanvasAction(name: string, args: Record<string, unknown>): Promise<unknown> {
+    return this.executeCanvasTool(name, args);
+  }
+
+  canvasWriteStreamLegacy(input: CanvasWriteInput): Observable<AskAgentStreamChunk> {
+    return createAsyncStream(async (subscriber) => {
+      const { provider } = this.providerService.resolveProvider(input.provider);
+
+      if (!provider.chatStream) {
+        subscriber.error(new Error('Provider does not support streaming.'));
+        return;
+      }
+
+      const messages: AiProviderMessage[] = [
+        {
+          role: 'system',
+          content: buildCanvasLegacyWritePrompt(input.canvasContent),
+        },
+        { role: 'user', content: input.userRequest },
+      ];
+
+      const emitter = provider.chatStream(messages, {
+        model: input.model,
+        temperature: 0.7,
+      });
+
+      pipeTextEmitterToSubscriber(emitter, subscriber);
+    });
+  }
+
+  private createEventChunk(type: string, payload: Record<string, unknown>): AskAgentStreamChunk {
+    return {
+      chunk: JSON.stringify({ type, ...payload }),
+      done: false,
+    };
+  }
+
+  private async buildCanvasSnapshot(canvasId: string, fallbackContent: string, contextLabel: string): Promise<string> {
+    try {
+      const blocks = await this.mcpClient.getBlocks(canvasId);
+      if (blocks.length > 0) {
+        return JSON.stringify(blocks, null, 2);
+      }
+    } catch (error) {
+      console.warn(`[${contextLabel}] MCP getBlocks failed:`, error);
+    }
+
+    return fallbackContent?.trim() ? fallbackContent : '(empty canvas)';
+  }
+
+  private stripActionTrace(content: string): string {
+    const marker = '\n[ACTIONS]\n';
+    const exactMarkerIndex = content.indexOf(marker);
+    if (exactMarkerIndex >= 0) {
+      return content.slice(0, exactMarkerIndex).trim();
+    }
+
+    const looseMarkerIndex = content.indexOf('[ACTIONS]');
+    if (looseMarkerIndex >= 0) {
+      return content.slice(0, looseMarkerIndex).trim();
+    }
+
+    return content.trim();
+  }
+
+  private extractActionsFromContent(content?: string): {
+    summary: string;
+    actions: NormalizedCanvasAction[];
+  } {
+    const rawContent = content?.trim() ?? '';
+    if (!rawContent) {
+      return { summary: '', actions: [] };
+    }
+
+    const marker = '[ACTIONS]';
+    const markerIndex = rawContent.indexOf(marker);
+    if (markerIndex < 0) {
+      return { summary: rawContent, actions: [] };
+    }
+
+    const summary = rawContent.slice(0, markerIndex).trim();
+    const rawJson = rawContent.slice(markerIndex + marker.length).trim();
+
+    if (!rawJson) {
+      return { summary, actions: [] };
+    }
+
+    try {
+      const parsed = JSON.parse(rawJson) as unknown;
+      if (!Array.isArray(parsed)) {
+        return { summary: rawContent, actions: [] };
+      }
+
+      return {
+        summary,
+        actions: parsed
+          .map((item, index) => this.normalizeParsedAction(item as ParsedCanvasAction, index))
+          .filter((item): item is NormalizedCanvasAction => item !== null),
+      };
+    } catch {
+      return { summary: rawContent, actions: [] };
+    }
+  }
+
+  private normalizeParsedAction(action: ParsedCanvasAction, fallbackIndex: number): NormalizedCanvasAction | null {
+    if (!action?.name || typeof action.name !== 'string') {
+      return null;
+    }
+
+    const rawArguments = action.arguments;
+    const normalizedArguments =
+      rawArguments && typeof rawArguments === 'object' && !Array.isArray(rawArguments) ? rawArguments : {};
+
+    return {
+      id: typeof action.id === 'string' && action.id.trim() ? action.id : `${Date.now()}-${fallbackIndex}`,
+      name: action.name,
+      arguments: normalizedArguments,
+      status: typeof action.status === 'string' && action.status.trim() ? action.status : 'pending',
+    };
+  }
+
+  private async executeCanvasTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+    const canvasId = args['canvas_id'] as string;
+
+    switch (name) {
+      case 'insert_canvas_block':
+        return this.mcpClient.insertBlock(
+          canvasId,
+          args['content'] as string,
+          (args['type'] as string) ?? 'paragraph',
+          args['after_index'] !== undefined ? Number(args['after_index']) : undefined
+        );
+      case 'update_canvas_block':
+        return this.mcpClient.updateBlock(canvasId, Number(args['index']), args['content'] as string);
+      case 'delete_canvas_block':
+        return this.mcpClient.deleteBlock(canvasId, Number(args['index']));
+      case 'reorder_canvas_blocks':
+        return this.mcpClient.reorderBlocks(canvasId, Number(args['from_index']), Number(args['to_index']));
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+  }
+}

@@ -1,16 +1,25 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { AgentService, AI_PROVIDER_REGISTRY, AiProviderRegistry } from './agent.service';
+import { AgentCanvasService } from './services/agent-canvas.service';
+import { AgentChatService } from './services/agent-chat.service';
+import { AgentProviderService } from './services/agent-provider.service';
+import { AI_PROVIDER_REGISTRY } from './shared/agent.constants';
+import { AgentService } from './agent.service';
+import { AiProviderRegistry } from './shared/agent.types';
 import { AgentGrpcController } from './agent-grpc.controller';
 import { OpenaiProvider } from './ai-providers/openai/openai-provider';
 import { GeminiProvider } from './ai-providers/gemini/gemini-provider';
 import { AiChatModule } from '../ai-chat/ai-chat.module';
+import { McpClientModule } from '../mcp-client/mcp-client.module';
 
 @Module({
-  imports: [ConfigModule, AiChatModule],
+  imports: [ConfigModule, AiChatModule, McpClientModule],
   controllers: [AgentGrpcController],
   providers: [
     AgentService,
+    AgentProviderService,
+    AgentChatService,
+    AgentCanvasService,
     {
       provide: 'OPENAI_PROVIDER',
       useFactory: (config: ConfigService) => {

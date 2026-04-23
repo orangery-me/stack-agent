@@ -35,6 +35,9 @@ import * as Joi from 'joi';
         OPENAI_MODEL: Joi.string().default('gpt-4'),
         GEMINI_MODEL: Joi.string().default('gemini-pro'),
 
+        // MCP server URL (stack-api/mcp endpoint)
+        MCP_URL: Joi.string().default('http://127.0.0.1:8105/api/mcp'),
+
         // Optional
         LOG_LEVEL: Joi.string().valid('error', 'warn', 'info', 'debug').default('info'),
         TZ: Joi.string().default('Asia/Ho_Chi_Minh'),

@@ -2,7 +2,8 @@ import { Controller } from '@nestjs/common';
 import { GrpcMethod, RpcException } from '@nestjs/microservices';
 import { Observable } from 'rxjs';
 import { status as GrpcStatus } from '@grpc/grpc-js';
-import { AgentService, AskAgentStreamChunk } from './agent.service';
+import { AgentService } from './agent.service';
+import { AskAgentStreamChunk } from './shared/agent.types';
 import { AiChatSessionService } from '../ai-chat/ai-chat-session.service';
 
 // ---- Request/Response interfaces matching the proto ----
@@ -55,11 +56,30 @@ interface CanvasWriteRequest {
   model?: string;
 }
 
+interface CanvasSessionMessageRequest {
+  userId: string;
+  sessionId: string;
+  canvasId?: string;
+  canvasContent?: string;
+  message: string;
+  provider?: string;
+  model?: string;
+}
+
+interface CanvasApplyActionRequest {
+  canvasId?: string;
+  actionName?: string;
+  actionArgsJson?: string;
+}
+
 // ---- Controller ----
 
 @Controller()
 export class AgentGrpcController {
-  constructor(private readonly agentService: AgentService, private readonly sessionService: AiChatSessionService) {}
+  constructor(
+    private readonly agentService: AgentService,
+    private readonly sessionService: AiChatSessionService
+  ) {}
 
   // ---- Legacy ----
 
@@ -254,12 +274,109 @@ export class AgentGrpcController {
     if (!data?.userRequest?.trim()) {
       throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'userRequest is required' });
     }
+    if (!data?.canvasId?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'canvasId is required' });
+    }
     return this.agentService.canvasWriteStream({
+      canvasId: data.canvasId.trim(),
       canvasContent: data.canvasContent ?? '',
       userRequest: data.userRequest.trim(),
       provider: data.provider?.trim() || undefined,
       model: data.model?.trim() || undefined,
     });
+  }
+
+  @GrpcMethod('AgentService', 'CanvasSessionMessageStream')
+  canvasSessionMessageStream(data: CanvasSessionMessageRequest): Observable<AskAgentStreamChunk> {
+    this.requireUserId(data.userId);
+    this.requireSessionId(data.sessionId);
+    if (!data?.message?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'message is required' });
+    }
+    if (!data?.canvasId?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'canvasId is required' });
+    }
+
+    return new Observable((subscriber) => {
+      (async () => {
+        const session = await this.sessionService.getSessionForUser(data.userId, data.sessionId);
+        if (!session) {
+          subscriber.error(new RpcException({ code: GrpcStatus.NOT_FOUND, message: 'Session not found' }));
+          return;
+        }
+
+        await this.sessionService.appendUserMessage(data.sessionId, data.message.trim());
+        let assistantSummary = '';
+        let actionTrace = '';
+
+        const stream$ = this.agentService.canvasSessionPreviewStream({
+          canvasId: data.canvasId.trim(),
+          canvasContent: data.canvasContent ?? '',
+          userRequest: data.message.trim(),
+          provider: data.provider?.trim() || undefined,
+          model: data.model?.trim() || undefined,
+          sessionId: data.sessionId,
+        });
+
+        stream$.subscribe({
+          next: (chunk) => {
+            if (!chunk.done && chunk.chunk) {
+              try {
+                const payload = JSON.parse(chunk.chunk) as { type?: string; content?: string; actions?: unknown[] };
+                if (payload.type === 'assistant' && payload.content) {
+                  assistantSummary += payload.content;
+                } else if (payload.type === 'actions' && payload.actions) {
+                  actionTrace = JSON.stringify(payload.actions);
+                }
+              } catch {
+                // Ignore non-json event payloads
+              }
+            }
+            subscriber.next(chunk);
+          },
+          complete: async () => {
+            const finalMessage =
+              assistantSummary.trim() || 'I did not find any changes that are suitable to propose on this canvas.';
+            const traceSuffix = actionTrace ? `\n\n[ACTIONS]\n${actionTrace}` : '';
+            await this.sessionService
+              .appendAssistantMessage(data.sessionId, `${finalMessage}${traceSuffix}`)
+              .catch(console.error);
+            subscriber.complete();
+          },
+          error: (err) => subscriber.error(err),
+        });
+      })().catch((err) => subscriber.error(err));
+    });
+  }
+
+  @GrpcMethod('AgentService', 'CanvasApplyAction')
+  async canvasApplyAction(data: CanvasApplyActionRequest) {
+    if (!data?.canvasId?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'canvasId is required' });
+    }
+    if (!data?.actionName?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'actionName is required' });
+    }
+
+    try {
+      const parsedArgs = data.actionArgsJson?.trim() ? JSON.parse(data.actionArgsJson) : {};
+      const args = {
+        ...(parsedArgs as Record<string, unknown>),
+        canvas_id: data.canvasId.trim(),
+      };
+      const result = await this.agentService.applyCanvasAction(data.actionName.trim(), args);
+      return {
+        ok: true,
+        resultJson: JSON.stringify(result),
+        error: '',
+      };
+    } catch (err: any) {
+      return {
+        ok: false,
+        resultJson: '',
+        error: err?.message ?? 'Failed to apply action',
+      };
+    }
   }
 
   // ---- Helpers ----

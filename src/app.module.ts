@@ -32,7 +32,7 @@ import * as Joi from 'joi';
 
         // AI provider: 'openai' | 'gemini'. OpenAI requires OPENAI_API_KEY, Gemini requires GEMINI_API_KEY
         AI_PROVIDER: Joi.string().valid('openai', 'gemini').default('openai'),
-        OPENAI_MODEL: Joi.string().default('gpt-4'),
+        OPENAI_MODEL: Joi.string().default('gpt-5.3-codex'),
         GEMINI_MODEL: Joi.string().default('gemini-pro'),
 
         // MCP server URL (stack-api/mcp endpoint)

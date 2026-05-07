@@ -72,6 +72,28 @@ interface CanvasApplyActionRequest {
   actionArgsJson?: string;
 }
 
+interface TaskSessionMessageRequest {
+  userId: string;
+  sessionId: string;
+  workspaceId: string;
+  channelId?: string;
+  taskListId?: string;
+  canvasId?: string;
+  canvasContent?: string;
+  message: string;
+  provider?: string;
+  model?: string;
+}
+
+interface TaskApplyActionRequest {
+  userId: string;
+  workspaceId: string;
+  channelId?: string;
+  taskListId?: string;
+  actionName?: string;
+  actionArgsJson?: string;
+}
+
 // ---- Controller ----
 
 @Controller()
@@ -365,6 +387,106 @@ export class AgentGrpcController {
         canvas_id: data.canvasId.trim(),
       };
       const result = await this.agentService.applyCanvasAction(data.actionName.trim(), args);
+      return {
+        ok: true,
+        resultJson: JSON.stringify(result),
+        error: '',
+      };
+    } catch (err: any) {
+      return {
+        ok: false,
+        resultJson: '',
+        error: err?.message ?? 'Failed to apply action',
+      };
+    }
+  }
+
+  @GrpcMethod('AgentService', 'TaskSessionMessageStream')
+  taskSessionMessageStream(data: TaskSessionMessageRequest): Observable<AskAgentStreamChunk> {
+    this.requireUserId(data.userId);
+    this.requireSessionId(data.sessionId);
+    if (!data?.workspaceId?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'workspaceId is required' });
+    }
+    if (!data?.message?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'message is required' });
+    }
+
+    return new Observable((subscriber) => {
+      (async () => {
+        const session = await this.sessionService.getSessionForUser(data.userId, data.sessionId);
+        if (!session) {
+          subscriber.error(new RpcException({ code: GrpcStatus.NOT_FOUND, message: 'Session not found' }));
+          return;
+        }
+
+        await this.sessionService.appendUserMessage(data.sessionId, data.message.trim());
+        let assistantSummary = '';
+        let actionTrace = '';
+
+        const stream$ = this.agentService.taskSessionPreviewStream({
+          userId: data.userId,
+          sessionId: data.sessionId,
+          workspaceId: data.workspaceId.trim(),
+          channelId: data.channelId?.trim() || undefined,
+          taskListId: data.taskListId?.trim() || undefined,
+          canvasId: data.canvasId?.trim() || undefined,
+          canvasContent: data.canvasContent ?? '',
+          userRequest: data.message.trim(),
+          provider: data.provider?.trim() || undefined,
+          model: data.model?.trim() || undefined,
+        });
+
+        stream$.subscribe({
+          next: (chunk) => {
+            if (!chunk.done && chunk.chunk) {
+              try {
+                const payload = JSON.parse(chunk.chunk) as { type?: string; content?: string; actions?: unknown[] };
+                if (payload.type === 'assistant' && payload.content) {
+                  assistantSummary += payload.content;
+                } else if (payload.type === 'actions' && payload.actions) {
+                  actionTrace = JSON.stringify(payload.actions);
+                }
+              } catch {
+                // Ignore non-json event payloads
+              }
+            }
+            subscriber.next(chunk);
+          },
+          complete: async () => {
+            const finalMessage = assistantSummary.trim() || 'I could not generate task actions from this request.';
+            const traceSuffix = actionTrace ? `\n\n[ACTIONS]\n${actionTrace}` : '';
+            await this.sessionService
+              .appendAssistantMessage(data.sessionId, `${finalMessage}${traceSuffix}`)
+              .catch(console.error);
+            subscriber.complete();
+          },
+          error: (err) => subscriber.error(err),
+        });
+      })().catch((err) => subscriber.error(err));
+    });
+  }
+
+  @GrpcMethod('AgentService', 'TaskApplyAction')
+  async taskApplyAction(data: TaskApplyActionRequest) {
+    this.requireUserId(data.userId);
+    if (!data?.workspaceId?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'workspaceId is required' });
+    }
+    if (!data?.actionName?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'actionName is required' });
+    }
+
+    try {
+      const parsedArgs = data.actionArgsJson?.trim() ? JSON.parse(data.actionArgsJson) : {};
+      const result = await this.agentService.applyTaskAction({
+        userId: data.userId,
+        workspaceId: data.workspaceId.trim(),
+        channelId: data.channelId?.trim() || undefined,
+        taskListId: data.taskListId?.trim() || undefined,
+        actionName: data.actionName.trim(),
+        actionArgs: parsedArgs as Record<string, unknown>,
+      });
       return {
         ok: true,
         resultJson: JSON.stringify(result),

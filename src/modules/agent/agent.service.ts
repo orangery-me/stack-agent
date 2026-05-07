@@ -2,11 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { AgentCanvasService } from './services/agent-canvas.service';
 import { AgentChatService } from './services/agent-chat.service';
+import { AgentTaskService } from './services/agent-task.service';
 import {
   AskAgentInput,
   AskAgentOutput,
   AskAgentStreamChunk,
   CanvasSessionPreviewInput,
+  TaskApplyActionInput,
+  TaskSessionPreviewInput,
   CanvasWriteInput,
 } from './shared/agent.types';
 
@@ -14,7 +17,8 @@ import {
 export class AgentService {
   constructor(
     private readonly chatService: AgentChatService,
-    private readonly canvasService: AgentCanvasService
+    private readonly canvasService: AgentCanvasService,
+    private readonly taskService: AgentTaskService,
   ) {}
 
   askAgent(input: AskAgentInput): Promise<AskAgentOutput> {
@@ -37,6 +41,14 @@ export class AgentService {
     return this.canvasService.applyCanvasAction(name, args);
   }
 
+  taskSessionPreviewStream(input: TaskSessionPreviewInput): Observable<AskAgentStreamChunk> {
+    return this.taskService.taskSessionPreviewStream(input);
+  }
+
+  applyTaskAction(input: TaskApplyActionInput): Promise<unknown> {
+    return this.taskService.applyTaskAction(input);
+  }
+
   canvasWriteStreamLegacy(input: CanvasWriteInput): Observable<AskAgentStreamChunk> {
     return this.canvasService.canvasWriteStreamLegacy(input);
   }
@@ -47,5 +59,7 @@ export {
   AskAgentOutput,
   AskAgentStreamChunk,
   CanvasSessionPreviewInput,
+  TaskApplyActionInput,
+  TaskSessionPreviewInput,
   CanvasWriteInput,
 } from './shared/agent.types';

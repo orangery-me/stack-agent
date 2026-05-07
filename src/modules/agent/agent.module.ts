@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AgentCanvasService } from './services/agent-canvas.service';
 import { AgentChatService } from './services/agent-chat.service';
 import { AgentProviderService } from './services/agent-provider.service';
+import { AgentTaskService } from './services/agent-task.service';
 import { AI_PROVIDER_REGISTRY } from './shared/agent.constants';
 import { AgentService } from './agent.service';
 import { AiProviderRegistry } from './shared/agent.types';
@@ -20,6 +21,7 @@ import { McpClientModule } from '../mcp-client/mcp-client.module';
     AgentProviderService,
     AgentChatService,
     AgentCanvasService,
+    AgentTaskService,
     {
       provide: 'OPENAI_PROVIDER',
       useFactory: (config: ConfigService) => {

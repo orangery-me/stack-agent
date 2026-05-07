@@ -40,3 +40,25 @@ export interface AskAgentStreamChunk {
   chunk: string;
   done: boolean;
 }
+
+export interface TaskSessionPreviewInput {
+  userId: string;
+  sessionId: string;
+  workspaceId: string;
+  channelId?: string;
+  taskListId?: string;
+  canvasId?: string;
+  canvasContent?: string;
+  userRequest: string;
+  provider?: string;
+  model?: string;
+}
+
+export interface TaskApplyActionInput {
+  userId: string;
+  workspaceId: string;
+  channelId?: string;
+  taskListId?: string;
+  actionName: string;
+  actionArgs: Record<string, unknown>;
+}

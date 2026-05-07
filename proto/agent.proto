@@ -26,6 +26,8 @@ service AgentService {
   rpc CanvasWrite (CanvasWriteRequest) returns (stream AskAgentStreamChunk);
   rpc CanvasSessionMessageStream (CanvasSessionMessageRequest) returns (stream AskAgentStreamChunk);
   rpc CanvasApplyAction (CanvasApplyActionRequest) returns (CanvasApplyActionResponse);
+  rpc TaskSessionMessageStream (TaskSessionMessageRequest) returns (stream AskAgentStreamChunk);
+  rpc TaskApplyAction (TaskApplyActionRequest) returns (TaskApplyActionResponse);
 }
 
 // ---- Legacy ----
@@ -140,6 +142,34 @@ message CanvasApplyActionRequest {
 }
 
 message CanvasApplyActionResponse {
+  bool ok = 1;
+  string result_json = 2;
+  string error = 3;
+}
+
+message TaskSessionMessageRequest {
+  string user_id = 1;
+  string session_id = 2;
+  string workspace_id = 3;
+  string channel_id = 4;
+  string task_list_id = 5;
+  string canvas_id = 6;
+  string canvas_content = 7;
+  string message = 8;
+  string provider = 9;
+  string model = 10;
+}
+
+message TaskApplyActionRequest {
+  string user_id = 1;
+  string workspace_id = 2;
+  string channel_id = 3;
+  string task_list_id = 4;
+  string action_name = 5;
+  string action_args_json = 6;
+}
+
+message TaskApplyActionResponse {
   bool ok = 1;
   string result_json = 2;
   string error = 3;

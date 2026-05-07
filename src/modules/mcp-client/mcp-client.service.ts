@@ -14,6 +14,18 @@ export interface BlockMutationResult {
   blocks: CanvasBlock[];
 }
 
+export interface CreateTaskPayload extends Record<string, unknown> {
+  workspace_id: string;
+  task_list_id: string;
+  acting_user_id: string;
+  title: string;
+  description?: string;
+  status?: string;
+  priority?: string;
+  due_date?: string;
+  assignee_ids?: string[];
+}
+
 @Injectable()
 export class McpClientService {
   private readonly mcpUrl: string;
@@ -46,12 +58,23 @@ export class McpClientService {
     return client;
   }
 
+  private parseToolText<T>(text: string, fallback: string): T {
+    const raw = text ?? fallback;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      // MCP can return plain-text validation/runtime errors.
+      // Surface the original message instead of a generic JSON parse error.
+      throw new Error(raw);
+    }
+  }
+
   async getBlocks(canvasId: string): Promise<CanvasBlock[]> {
     const client = await this.createClient();
     try {
       const result = await client.callTool({ name: 'get_canvas_blocks', arguments: { canvas_id: canvasId } });
       const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '[]';
-      return JSON.parse(text) as CanvasBlock[];
+      return this.parseToolText<CanvasBlock[]>(text, '[]');
     } finally {
       await client.close();
     }
@@ -69,7 +92,7 @@ export class McpClientService {
       if (afterIndex !== undefined) args['after_index'] = afterIndex;
       const result = await client.callTool({ name: 'insert_canvas_block', arguments: args });
       const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '{}';
-      return JSON.parse(text) as BlockMutationResult;
+      return this.parseToolText<BlockMutationResult>(text, '{}');
     } finally {
       await client.close();
     }
@@ -83,7 +106,7 @@ export class McpClientService {
         arguments: { canvas_id: canvasId, index, content },
       });
       const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '{}';
-      return JSON.parse(text) as BlockMutationResult;
+      return this.parseToolText<BlockMutationResult>(text, '{}');
     } finally {
       await client.close();
     }
@@ -97,7 +120,7 @@ export class McpClientService {
         arguments: { canvas_id: canvasId, index },
       });
       const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '{}';
-      return JSON.parse(text) as BlockMutationResult;
+      return this.parseToolText<BlockMutationResult>(text, '{}');
     } finally {
       await client.close();
     }
@@ -111,7 +134,72 @@ export class McpClientService {
         arguments: { canvas_id: canvasId, from_index: fromIndex, to_index: toIndex },
       });
       const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '{}';
-      return JSON.parse(text) as BlockMutationResult;
+      return this.parseToolText<BlockMutationResult>(text, '{}');
+    } finally {
+      await client.close();
+    }
+  }
+
+  async createTask(payload: CreateTaskPayload): Promise<unknown> {
+    const client = await this.createClient();
+    try {
+      const result = await client.callTool({ name: 'create_task', arguments: payload as Record<string, unknown> });
+      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '{}';
+      return this.parseToolText<unknown>(text, '{}');
+    } finally {
+      await client.close();
+    }
+  }
+
+  async createTasksBatch(payload: {
+    workspace_id: string;
+    task_list_id: string;
+    acting_user_id: string;
+    tasks: Array<Omit<CreateTaskPayload, 'workspace_id' | 'task_list_id' | 'acting_user_id'>>;
+  }): Promise<unknown> {
+    const client = await this.createClient();
+    try {
+      const result = await client.callTool({
+        name: 'create_tasks_batch',
+        arguments: payload as Record<string, unknown>,
+      });
+      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '[]';
+      return this.parseToolText<unknown>(text, '[]');
+    } finally {
+      await client.close();
+    }
+  }
+
+  async listTaskLists(payload: {
+    workspace_id: string;
+    acting_user_id: string;
+    channel_id?: string;
+  }): Promise<unknown[]> {
+    const client = await this.createClient();
+    try {
+      const result = await client.callTool({ name: 'list_task_lists', arguments: payload as Record<string, unknown> });
+      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '[]';
+      return this.parseToolText<unknown[]>(text, '[]');
+    } finally {
+      await client.close();
+    }
+  }
+
+  async searchWorkspaceMembers(payload: {
+    workspace_id: string;
+    acting_user_id: string;
+    query: string;
+    channel_id?: string;
+    limit?: number;
+  }): Promise<unknown[]> {
+    const client = await this.createClient();
+    try {
+      const result = await client.callTool({
+        name: 'search_workspace_members',
+        arguments: payload as Record<string, unknown>,
+      });
+      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '[]';
+      return this.parseToolText<unknown[]>(text, '[]');
     } finally {
       await client.close();
     }
@@ -130,7 +218,7 @@ export class McpClientService {
       for (const call of calls) {
         const result = await client.callTool({ name: call.name, arguments: call.arguments });
         const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? 'null';
-        results.push({ name: call.name, result: JSON.parse(text) });
+        results.push({ name: call.name, result: this.parseToolText<unknown>(text, 'null') });
       }
       return results;
     } finally {

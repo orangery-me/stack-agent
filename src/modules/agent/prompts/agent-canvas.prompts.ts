@@ -28,6 +28,21 @@ export function buildCanvasSessionPreviewPrompt({ canvasId, blocksJson }: Canvas
   );
 }
 
+export function buildCanvasSummaryPrompt({ canvasId, blocksJson }: CanvasPromptContext): string {
+  return (
+    `You are an AI assistant summarizing a canvas for a workspace user.\n` +
+    `Canvas ID: ${canvasId}\n` +
+    `Current canvas:\n---\n${blocksJson}\n---\n` +
+    `Return a concise, structured English summary. Include these sections when relevant:\n` +
+    `1) Key points\n` +
+    `2) Decisions\n` +
+    `3) Action items\n` +
+    `4) Risks or open questions\n` +
+    `Do not propose canvas edits. Do not call tools. Do not output JSON. ` +
+    `If the canvas is empty, say that there is no content to summarize.`
+  );
+}
+
 export function buildCanvasLegacyWritePrompt(canvasContent: string): string {
   const canvasContext = canvasContent?.trim()
     ? `Below is the current content of the canvas:\n---\n${canvasContent}\n---\n`

@@ -30,6 +30,7 @@ export interface CanvasSessionPreviewInput {
   provider?: string;
   model?: string;
   sessionId: string;
+  mode?: string;
 }
 
 export interface AskAgentOutput {
@@ -49,6 +50,10 @@ export interface TaskSessionPreviewInput {
   taskListId?: string;
   canvasId?: string;
   canvasContent?: string;
+  canvasTitle?: string;
+  sourceCanvasUrl?: string;
+  overallDueDate?: string;
+  timezone?: string;
   userRequest: string;
   provider?: string;
   model?: string;

@@ -31,7 +31,6 @@ const TASK_TOOLS: ToolDefinition[] = [
       properties: {
         workspace_id: { type: 'string', description: 'Workspace ID' },
         task_list_id: { type: 'string', description: 'Task list ID' },
-        acting_user_id: { type: 'string', description: 'Acting user ID' },
         title: { type: 'string', description: 'Task title' },
         description: { type: 'string', description: 'Task description' },
         status: { type: 'string', enum: ['todo', 'in_progress', 'done'], description: 'Task status' },
@@ -39,7 +38,7 @@ const TASK_TOOLS: ToolDefinition[] = [
         due_date: { type: 'string', description: 'Due date in ISO 8601 format' },
         assignee_ids: { type: 'array', items: { type: 'string' }, description: 'Workspace member IDs' },
       },
-      required: ['workspace_id', 'task_list_id', 'acting_user_id', 'title'],
+      required: ['workspace_id', 'task_list_id', 'title'],
     },
   },
   {
@@ -50,7 +49,6 @@ const TASK_TOOLS: ToolDefinition[] = [
       properties: {
         workspace_id: { type: 'string', description: 'Workspace ID' },
         task_list_id: { type: 'string', description: 'Task list ID' },
-        acting_user_id: { type: 'string', description: 'Acting user ID' },
         tasks: {
           type: 'array',
           items: {
@@ -59,7 +57,30 @@ const TASK_TOOLS: ToolDefinition[] = [
           description: 'Array of tasks with title/description/status/priority/due_date/assignee_ids',
         },
       },
-      required: ['workspace_id', 'task_list_id', 'acting_user_id', 'tasks'],
+      required: ['workspace_id', 'task_list_id', 'tasks'],
+    },
+  },
+  {
+    name: 'create_task_list_with_tasks',
+    description: 'Create a new task list and multiple tasks from a reviewed canvas task-generation action.',
+    parameters: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        channel_id: { type: 'string', description: 'Channel ID' },
+        list_name: { type: 'string', description: 'Task list name' },
+        source_canvas_id: { type: 'string', description: 'Source canvas ID' },
+        source_canvas_title: { type: 'string', description: 'Source canvas title' },
+        source_canvas_url: { type: 'string', description: 'Source canvas URL' },
+        overall_due_date: { type: 'string', description: 'Overall due date in ISO 8601 format' },
+        default_assignee: { type: 'string', enum: ['creator'], description: 'Always assign generated tasks to creator' },
+        tasks: {
+          type: 'array',
+          items: { type: 'object' },
+          description: 'Array of tasks with title/description/status/priority/due_date',
+        },
+      },
+      required: ['workspace_id', 'channel_id', 'list_name', 'tasks'],
     },
   },
   {
@@ -69,10 +90,9 @@ const TASK_TOOLS: ToolDefinition[] = [
       type: 'object',
       properties: {
         workspace_id: { type: 'string', description: 'Workspace ID' },
-        acting_user_id: { type: 'string', description: 'Acting user ID' },
         channel_id: { type: 'string', description: 'Optional channel ID' },
       },
-      required: ['workspace_id', 'acting_user_id'],
+      required: ['workspace_id'],
     },
   },
   {
@@ -82,12 +102,11 @@ const TASK_TOOLS: ToolDefinition[] = [
       type: 'object',
       properties: {
         workspace_id: { type: 'string', description: 'Workspace ID' },
-        acting_user_id: { type: 'string', description: 'Acting user ID' },
         query: { type: 'string', description: 'Search query' },
         channel_id: { type: 'string', description: 'Optional channel ID' },
         limit: { type: 'number', description: 'Result limit' },
       },
-      required: ['workspace_id', 'acting_user_id', 'query'],
+      required: ['workspace_id', 'query'],
     },
   },
 ];
@@ -138,6 +157,10 @@ export class AgentTaskService {
             channelId: input.channelId,
             taskListId: input.taskListId,
             canvasId: input.canvasId,
+            canvasTitle: input.canvasTitle,
+            sourceCanvasUrl: input.sourceCanvasUrl,
+            overallDueDate: input.overallDueDate,
+            timezone: input.timezone,
             canvasBlocksJson,
           }),
         },
@@ -197,6 +220,8 @@ export class AgentTaskService {
         return this.mcpClient.createTask(args as any);
       case 'create_tasks_batch':
         return this.mcpClient.createTasksBatch(args as any);
+      case 'create_task_list_with_tasks':
+        return this.mcpClient.createTaskListWithTasks(args as any);
       case 'list_task_lists':
         return this.mcpClient.listTaskLists(args as any);
       case 'search_workspace_members':
@@ -208,14 +233,28 @@ export class AgentTaskService {
 
   private normalizeActionArguments(
     rawArgs: Record<string, unknown>,
-    input: { workspaceId: string; userId: string; channelId?: string; taskListId?: string },
+    input: {
+      workspaceId: string;
+      userId: string;
+      channelId?: string;
+      taskListId?: string;
+      canvasId?: string;
+      canvasTitle?: string;
+      sourceCanvasUrl?: string;
+      overallDueDate?: string;
+    },
   ): Record<string, unknown> {
     return {
       ...rawArgs,
-      workspace_id: rawArgs.workspace_id ?? input.workspaceId,
-      acting_user_id: rawArgs.acting_user_id ?? input.userId,
-      channel_id: rawArgs.channel_id ?? input.channelId,
-      task_list_id: rawArgs.task_list_id ?? input.taskListId,
+      workspace_id: input.workspaceId,
+      acting_user_id: input.userId,
+      channel_id: input.channelId ?? rawArgs.channel_id,
+      task_list_id: input.taskListId ?? rawArgs.task_list_id,
+      source_canvas_id: input.canvasId ?? rawArgs.source_canvas_id,
+      source_canvas_title: input.canvasTitle ?? rawArgs.source_canvas_title,
+      source_canvas_url: input.sourceCanvasUrl ?? rawArgs.source_canvas_url,
+      overall_due_date: input.overallDueDate ?? rawArgs.overall_due_date,
+      default_assignee: rawArgs.default_assignee ?? 'creator',
     };
   }
 
@@ -277,4 +316,3 @@ export class AgentTaskService {
     };
   }
 }
-

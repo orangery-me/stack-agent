@@ -170,6 +170,31 @@ export class McpClientService {
     }
   }
 
+  async createTaskListWithTasks(payload: {
+    workspace_id: string;
+    channel_id: string;
+    acting_user_id: string;
+    list_name: string;
+    source_canvas_id?: string;
+    source_canvas_title?: string;
+    source_canvas_url?: string;
+    overall_due_date?: string;
+    default_assignee?: 'creator';
+    tasks: Array<Omit<CreateTaskPayload, 'workspace_id' | 'task_list_id' | 'acting_user_id'>>;
+  }): Promise<unknown> {
+    const client = await this.createClient();
+    try {
+      const result = await client.callTool({
+        name: 'create_task_list_with_tasks',
+        arguments: payload as Record<string, unknown>,
+      });
+      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '{}';
+      return this.parseToolText<unknown>(text, '{}');
+    } finally {
+      await client.close();
+    }
+  }
+
   async listTaskLists(payload: {
     workspace_id: string;
     acting_user_id: string;

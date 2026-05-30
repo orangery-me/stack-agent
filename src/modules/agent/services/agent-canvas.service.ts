@@ -5,6 +5,7 @@ import { McpClientService } from '../../mcp-client/mcp-client.service';
 import { AiProviderMessage, ToolDefinition } from '../ai-providers/ai-provider.interface';
 import {
   buildCanvasLegacyWritePrompt,
+  buildCanvasSummaryPrompt,
   buildCanvasSessionPreviewPrompt,
   buildCanvasWriteSystemPrompt,
 } from '../prompts/agent-canvas.prompts';
@@ -200,6 +201,35 @@ export class AgentCanvasService {
         input.canvasContent,
         'canvasSessionPreviewStream'
       );
+
+      if (input.mode === 'summary') {
+        const messages: AiProviderMessage[] = [
+          {
+            role: 'system',
+            content: buildCanvasSummaryPrompt({
+              canvasId: input.canvasId,
+              blocksJson,
+            }),
+          },
+          { role: 'user', content: input.userRequest },
+        ];
+
+        subscriber.next(this.createEventChunk('status', { message: 'AI is summarizing the canvas...' }));
+        const result = await provider.chat(messages, {
+          model: input.model,
+          temperature: 0.2,
+          maxToken: 2048,
+        });
+        const lastMessage = result[result.length - 1];
+        const content =
+          lastMessage?.role === 'assistant' || lastMessage?.role === 'model'
+            ? lastMessage.content
+            : 'I could not generate a summary for this canvas.';
+        subscriber.next(this.createEventChunk('assistant', { content }));
+        subscriber.next({ chunk: '', done: true });
+        subscriber.complete();
+        return;
+      }
 
       const history = await this.aiChatSessionService.buildContextMessages(input.sessionId);
       const historyWithoutTail = history.slice(0, Math.max(history.length - 1, 0));

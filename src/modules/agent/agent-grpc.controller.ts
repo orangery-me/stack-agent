@@ -64,6 +64,7 @@ interface CanvasSessionMessageRequest {
   message: string;
   provider?: string;
   model?: string;
+  mode?: string;
 }
 
 interface CanvasApplyActionRequest {
@@ -80,6 +81,10 @@ interface TaskSessionMessageRequest {
   taskListId?: string;
   canvasId?: string;
   canvasContent?: string;
+  canvasTitle?: string;
+  sourceCanvasUrl?: string;
+  overallDueDate?: string;
+  timezone?: string;
   message: string;
   provider?: string;
   model?: string;
@@ -338,6 +343,7 @@ export class AgentGrpcController {
           provider: data.provider?.trim() || undefined,
           model: data.model?.trim() || undefined,
           sessionId: data.sessionId,
+          mode: data.mode?.trim() || undefined,
         });
 
         stream$.subscribe({
@@ -432,6 +438,10 @@ export class AgentGrpcController {
           taskListId: data.taskListId?.trim() || undefined,
           canvasId: data.canvasId?.trim() || undefined,
           canvasContent: data.canvasContent ?? '',
+          canvasTitle: data.canvasTitle?.trim() || undefined,
+          sourceCanvasUrl: data.sourceCanvasUrl?.trim() || undefined,
+          overallDueDate: data.overallDueDate?.trim() || undefined,
+          timezone: data.timezone?.trim() || undefined,
           userRequest: data.message.trim(),
           provider: data.provider?.trim() || undefined,
           model: data.model?.trim() || undefined,

@@ -40,6 +40,15 @@ interface GetSessionMessagesRequest {
   size?: number;
 }
 
+interface UpdateMessageActionStatusRequest {
+  userId: string;
+  sessionId: string;
+  messageId?: string;
+  actionId: string;
+  status: string;
+  error?: string;
+}
+
 interface SendMessageRequest {
   userId: string;
   sessionId: string;
@@ -207,6 +216,36 @@ export class AgentGrpcController {
       total: result.total,
       hasMore: result.hasMore,
     };
+  }
+
+  @GrpcMethod('AgentService', 'UpdateMessageActionStatus')
+  async updateMessageActionStatus(data: UpdateMessageActionStatusRequest) {
+    this.requireUserId(data.userId);
+    this.requireSessionId(data.sessionId);
+    if (!data.actionId?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'actionId is required' });
+    }
+    if (!data.status?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'status is required' });
+    }
+
+    const session = await this.sessionService.getSessionForUser(data.userId, data.sessionId);
+    if (!session) {
+      throw new RpcException({ code: GrpcStatus.NOT_FOUND, message: 'Session not found' });
+    }
+
+    const message = await this.sessionService.updateMessageActionStatus({
+      sessionId: data.sessionId,
+      messageId: data.messageId?.trim() || undefined,
+      actionId: data.actionId.trim(),
+      status: data.status.trim(),
+      error: data.error?.trim() || undefined,
+    });
+    if (!message) {
+      throw new RpcException({ code: GrpcStatus.NOT_FOUND, message: 'Action not found' });
+    }
+
+    return this.sessionService.serializeMessage(message);
   }
 
   // ---- Send with session context ----

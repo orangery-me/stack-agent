@@ -14,6 +14,7 @@ service AgentService {
 
   // Message history
   rpc GetSessionMessages (GetSessionMessagesRequest) returns (MessageList);
+  rpc UpdateMessageActionStatus (UpdateMessageActionStatusRequest) returns (ChatMessage);
 
   // Update session metadata
   rpc UpdateSession (UpdateSessionRequest) returns (Session);
@@ -98,6 +99,15 @@ message MessageList {
   repeated ChatMessage messages = 1;
   int32 total = 2;
   bool has_more = 3;
+}
+
+message UpdateMessageActionStatusRequest {
+  string user_id = 1;
+  string session_id = 2;
+  string message_id = 3;
+  string action_id = 4;
+  string status = 5;
+  string error = 6;
 }
 
 // ---- Send ----

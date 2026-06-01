@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { AiChatSessionService } from '../../ai-chat/ai-chat-session.service';
 import { AiProviderMessage } from '../ai-providers/ai-provider.interface';
+import { GENERAL_AGENT_SYSTEM_PROMPT } from '../prompts/agent-chat.prompts';
 import { AskAgentInput, AskAgentOutput, AskAgentStreamChunk } from '../shared/agent.types';
 import { createAsyncStream, pipeTextEmitterToSubscriber } from '../utils/agent-stream.utils';
 import { AgentProviderService } from './agent-provider.service';
@@ -49,17 +50,24 @@ export class AgentChatService {
   }
 
   private async buildMessages(input: AskAgentInput): Promise<AiProviderMessage[]> {
+    const systemMessage: AiProviderMessage = {
+      role: 'system',
+      content: GENERAL_AGENT_SYSTEM_PROMPT,
+    };
+
     if (!input.sessionId) {
-      return [{ role: 'user', content: input.message }];
+      return [systemMessage, { role: 'user', content: input.message }];
     }
 
-    const messages = await this.aiChatSessionService.buildContextMessages(input.sessionId);
+    const messages = (await this.aiChatSessionService.buildContextMessages(input.sessionId)).filter(
+      (message) => message.role !== 'system'
+    );
     const lastMessage = messages[messages.length - 1];
 
     if (!lastMessage || lastMessage.content !== input.message) {
       messages.push({ role: 'user', content: input.message });
     }
 
-    return messages;
+    return [systemMessage, ...messages];
   }
 }

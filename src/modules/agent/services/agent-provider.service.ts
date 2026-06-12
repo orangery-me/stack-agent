@@ -13,12 +13,12 @@ export class AgentProviderService {
   ) {}
 
   resolveProvider(providerName?: string): { provider: AiProvider; name: AgentProviderName } {
-    const defaultProvider = this.config.get<string>('AI_PROVIDER', 'openai') as AgentProviderName;
+    const defaultProvider = this.config.get<string>('AI_PROVIDER', 'deepseek') as AgentProviderName;
     const name = (providerName ?? defaultProvider) as AgentProviderName;
     const provider = this.providerRegistry[name];
 
     if (!provider) {
-      throw new Error(`Unknown provider: "${providerName}". Use "openai" or "gemini".`);
+      throw new Error(`Unknown provider: "${providerName}". Use "openai", "gemini", or "deepseek".`);
     }
 
     return { provider, name };

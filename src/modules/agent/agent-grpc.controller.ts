@@ -20,11 +20,15 @@ interface AskAgentResponse {
 
 interface UserRequest {
   userId: string;
+  scopeType?: string;
+  scopeId?: string;
 }
 
 interface CreateSessionRequest {
   userId: string;
   title?: string;
+  scopeType?: string;
+  scopeId?: string;
 }
 
 interface UpdateSessionRequest {
@@ -38,6 +42,8 @@ interface GetSessionMessagesRequest {
   sessionId: string;
   page?: number;
   size?: number;
+  scopeType?: string;
+  scopeId?: string;
 }
 
 interface UpdateMessageActionStatusRequest {
@@ -154,8 +160,9 @@ export class AgentGrpcController {
   @GrpcMethod('AgentService', 'GetOrCreateActiveSession')
   async getOrCreateActiveSession(data: UserRequest) {
     this.requireUserId(data.userId);
+    this.requireValidScope(data.scopeType, data.scopeId);
     try {
-      const session = await this.sessionService.getOrCreateActiveSession(data.userId);
+      const session = await this.sessionService.getOrCreateActiveSession(data.userId, this.sessionScope(data));
       return this.sessionService.serializeSession(session);
     } catch (err: any) {
       throw new RpcException({ code: GrpcStatus.INTERNAL, message: err?.message });
@@ -165,8 +172,9 @@ export class AgentGrpcController {
   @GrpcMethod('AgentService', 'ListSessions')
   async listSessions(data: UserRequest) {
     this.requireUserId(data.userId);
+    this.requireValidScope(data.scopeType, data.scopeId);
     try {
-      const sessions = await this.sessionService.listSessions(data.userId);
+      const sessions = await this.sessionService.listSessions(data.userId, this.sessionScope(data));
       return { sessions: sessions.map((s) => this.sessionService.serializeSession(s)) };
     } catch (err: any) {
       throw new RpcException({ code: GrpcStatus.INTERNAL, message: err?.message });
@@ -190,8 +198,9 @@ export class AgentGrpcController {
   @GrpcMethod('AgentService', 'CreateSession')
   async createSession(data: CreateSessionRequest) {
     this.requireUserId(data.userId);
+    this.requireValidScope(data.scopeType, data.scopeId);
     try {
-      const session = await this.sessionService.createSession(data.userId, data.title);
+      const session = await this.sessionService.createSession(data.userId, data.title, this.sessionScope(data));
       return this.sessionService.serializeSession(session);
     } catch (err: any) {
       throw new RpcException({ code: GrpcStatus.INTERNAL, message: err?.message });
@@ -206,7 +215,8 @@ export class AgentGrpcController {
     if (!data.sessionId) {
       throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'sessionId is required' });
     }
-    const session = await this.sessionService.getSessionForUser(data.userId, data.sessionId);
+    this.requireValidScope(data.scopeType, data.scopeId);
+    const session = await this.sessionService.getSessionForUser(data.userId, data.sessionId, this.sessionScope(data));
     if (!session) {
       throw new RpcException({ code: GrpcStatus.NOT_FOUND, message: 'Session not found' });
     }
@@ -262,6 +272,7 @@ export class AgentGrpcController {
     if (!session) {
       throw new RpcException({ code: GrpcStatus.NOT_FOUND, message: 'Session not found' });
     }
+    this.requireGeneralSession(session);
 
     try {
       await this.sessionService.appendUserMessage(data.sessionId, data.message.trim());
@@ -300,6 +311,7 @@ export class AgentGrpcController {
           subscriber.error(new RpcException({ code: GrpcStatus.NOT_FOUND, message: 'Session not found' }));
           return;
         }
+        this.requireGeneralSession(session);
 
         // Persist the user message
         await this.sessionService.appendUserMessage(data.sessionId, data.message.trim());
@@ -365,7 +377,10 @@ export class AgentGrpcController {
 
     return new Observable((subscriber) => {
       (async () => {
-        const session = await this.sessionService.getSessionForUser(data.userId, data.sessionId);
+        const session = await this.sessionService.getSessionForUser(data.userId, data.sessionId, {
+          scopeType: 'canvas',
+          scopeId: data.canvasId.trim(),
+        });
         if (!session) {
           subscriber.error(new RpcException({ code: GrpcStatus.NOT_FOUND, message: 'Session not found' }));
           return;
@@ -462,6 +477,12 @@ export class AgentGrpcController {
         const session = await this.sessionService.getSessionForUser(data.userId, data.sessionId);
         if (!session) {
           subscriber.error(new RpcException({ code: GrpcStatus.NOT_FOUND, message: 'Session not found' }));
+          return;
+        }
+        if ((session.scopeType || 'general') === 'canvas' && session.scopeId !== (data.canvasId?.trim() || null)) {
+          subscriber.error(
+            new RpcException({ code: GrpcStatus.PERMISSION_DENIED, message: 'Session does not belong to this canvas' })
+          );
           return;
         }
 
@@ -561,6 +582,32 @@ export class AgentGrpcController {
   private requireSessionId(sessionId: string) {
     if (!sessionId?.trim()) {
       throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'sessionId is required' });
+    }
+  }
+
+  private sessionScope(data: { scopeType?: string; scopeId?: string }) {
+    return {
+      scopeType: data.scopeType?.trim() || 'general',
+      scopeId: data.scopeId?.trim() || undefined,
+    };
+  }
+
+  private requireValidScope(scopeType?: string, scopeId?: string) {
+    const normalizedScopeType = scopeType?.trim() || 'general';
+    if (!['general', 'canvas'].includes(normalizedScopeType)) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'Invalid session scope' });
+    }
+    if (normalizedScopeType === 'canvas' && !scopeId?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'scopeId is required for canvas sessions' });
+    }
+  }
+
+  private requireGeneralSession(session: any) {
+    if ((session?.scopeType || 'general') !== 'general') {
+      throw new RpcException({
+        code: GrpcStatus.PERMISSION_DENIED,
+        message: 'Session is not available in general chat scope',
+      });
     }
   }
 }

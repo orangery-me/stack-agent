@@ -1,14 +1,19 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { AiChatSession, AiChatSessionDocument } from './schemas/ai-chat-session.schema';
+import { AiChatSession, AiChatSessionDocument, AiChatSessionScopeType } from './schemas/ai-chat-session.schema';
 import { AiChatMessage, AiChatMessageDocument, MessageRole } from './schemas/ai-chat-message.schema';
 import { AiProviderMessage } from '../agent/ai-providers/ai-provider.interface';
 
 const MAX_CONTEXT_MESSAGES = 50;
 
+export interface AiChatSessionScope {
+  scopeType?: string;
+  scopeId?: string | null;
+}
+
 @Injectable()
-export class AiChatSessionService {
+export class AiChatSessionService implements OnModuleInit {
   constructor(
     @InjectModel(AiChatSession.name)
     private readonly sessionModel: Model<AiChatSessionDocument>,
@@ -17,21 +22,30 @@ export class AiChatSessionService {
     private readonly messageModel: Model<AiChatMessageDocument>
   ) {}
 
-  async getOrCreateActiveSession(userId: string): Promise<AiChatSessionDocument> {
-    const existing = await this.sessionModel.findOne({ userId, isActive: true }).exec();
+  async onModuleInit() {
+    await this.ensureScopedSessionCompatibility();
+  }
+
+  async getOrCreateActiveSession(userId: string, scope?: AiChatSessionScope): Promise<AiChatSessionDocument> {
+    const normalizedScope = this.normalizeScope(scope);
+    const existing = await this.sessionModel.findOne({ userId, ...normalizedScope, isActive: true }).exec();
     if (existing) return existing;
 
-    return this.sessionModel.create({ userId, title: 'New chat', isActive: true });
+    return this.sessionModel.create({ userId, ...normalizedScope, title: 'New chat', isActive: true });
   }
 
-  async listSessions(userId: string): Promise<AiChatSessionDocument[]> {
-    return this.sessionModel.find({ userId }).sort({ createdAt: -1 }).limit(50).exec();
+  async listSessions(userId: string, scope?: AiChatSessionScope): Promise<AiChatSessionDocument[]> {
+    return this.sessionModel.find({ userId, ...this.normalizeScope(scope) }).sort({ createdAt: -1 }).limit(50).exec();
   }
 
-  async createSession(userId: string, title = 'New chat'): Promise<AiChatSessionDocument> {
-    // Deactivate current active session
-    await this.sessionModel.updateMany({ userId, isActive: true }, { isActive: false, archivedAt: new Date() });
-    return this.sessionModel.create({ userId, title, isActive: true });
+  async createSession(userId: string, title = 'New chat', scope?: AiChatSessionScope): Promise<AiChatSessionDocument> {
+    const normalizedScope = this.normalizeScope(scope);
+    // Deactivate current active session in the same scope only.
+    await this.sessionModel.updateMany(
+      { userId, ...normalizedScope, isActive: true },
+      { isActive: false, archivedAt: new Date() }
+    );
+    return this.sessionModel.create({ userId, ...normalizedScope, title, isActive: true });
   }
 
   async getMessages(
@@ -180,8 +194,14 @@ export class AiChatSessionService {
     }));
   }
 
-  async getSessionForUser(userId: string, sessionId: string): Promise<AiChatSessionDocument | null> {
-    return this.sessionModel.findOne({ _id: new Types.ObjectId(sessionId), userId }).exec();
+  async getSessionForUser(
+    userId: string,
+    sessionId: string,
+    scope?: AiChatSessionScope
+  ): Promise<AiChatSessionDocument | null> {
+    return this.sessionModel
+      .findOne({ _id: new Types.ObjectId(sessionId), userId, ...(scope ? this.normalizeScope(scope) : {}) })
+      .exec();
   }
 
   async updateSessionTitle(userId: string, sessionId: string, title: string): Promise<AiChatSessionDocument | null> {
@@ -200,6 +220,8 @@ export class AiChatSessionService {
       userId: session.userId,
       title: session.title,
       isActive: session.isActive,
+      scopeType: session.scopeType || 'general',
+      scopeId: session.scopeId ?? null,
       createdAt: (session as any).createdAt?.toISOString?.() ?? '',
       updatedAt: (session as any).updatedAt?.toISOString?.() ?? '',
     };
@@ -213,5 +235,46 @@ export class AiChatSessionService {
       content: msg.content,
       createdAt: (msg as any).createdAt?.toISOString?.() ?? '',
     };
+  }
+
+  normalizeScope(scope?: AiChatSessionScope): { scopeType: AiChatSessionScopeType; scopeId: string | null } {
+    const scopeType = scope?.scopeType === 'canvas' ? 'canvas' : 'general';
+    const scopeId = scopeType === 'canvas' ? scope?.scopeId?.trim() || null : null;
+    return { scopeType, scopeId };
+  }
+
+  private async ensureScopedSessionCompatibility() {
+    await this.sessionModel
+      .updateMany(
+        {
+          $or: [{ scopeType: { $exists: false } }, { scopeType: null }, { scopeType: '' }],
+        },
+        { $set: { scopeType: 'general' } }
+      )
+      .exec();
+
+    await this.sessionModel
+      .updateMany(
+        {
+          $or: [{ scopeId: { $exists: false } }, { scopeType: { $ne: 'canvas' } }],
+        },
+        { $set: { scopeId: null } }
+      )
+      .exec();
+
+    try {
+      await this.sessionModel.collection.dropIndex('userId_1_isActive_1');
+    } catch {
+      // Old deployments may not have this index or may have already migrated.
+    }
+
+    try {
+      await this.sessionModel.collection.createIndex(
+        { userId: 1, scopeType: 1, scopeId: 1, isActive: 1 },
+        { unique: true, partialFilterExpression: { isActive: true } }
+      );
+    } catch {
+      // Schema autoIndex or a previous startup may have already created it.
+    }
   }
 }

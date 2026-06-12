@@ -1,10 +1,11 @@
 import { AiProvider } from '../ai-providers/ai-provider.interface';
 
-export type AgentProviderName = 'openai' | 'gemini';
+export type AgentProviderName = 'openai' | 'gemini' | 'deepseek';
 
 export interface AiProviderRegistry {
   openai: AiProvider;
   gemini: AiProvider;
+  deepseek: AiProvider;
 }
 
 export interface AskAgentInput {

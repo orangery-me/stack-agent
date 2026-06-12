@@ -30,10 +30,11 @@ import * as Joi from 'joi';
         KEEP_ALIVE_ENABLED: Joi.boolean().default(true),
         KEEP_ALIVE_INTERVAL: Joi.number().default(30),
 
-        // AI provider: 'openai' | 'gemini'. OpenAI requires OPENAI_API_KEY, Gemini requires GEMINI_API_KEY
-        AI_PROVIDER: Joi.string().valid('openai', 'gemini').default('openai'),
+        // AI provider: 'openai' | 'gemini' | 'deepseek'. Each requires its own API key.
+        AI_PROVIDER: Joi.string().valid('openai', 'gemini', 'deepseek').default('deepseek'),
         OPENAI_MODEL: Joi.string().default('gpt-5.3-codex'),
         GEMINI_MODEL: Joi.string().default('gemini-pro'),
+        DEEPSEEK_MODEL: Joi.string().default('deepseek-v4-pro'),
 
         // MCP server URL (stack-api/mcp endpoint)
         MCP_URL: Joi.string().default('http://127.0.0.1:8105/api/mcp'),

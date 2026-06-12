@@ -52,11 +52,15 @@ message AskAgentStreamChunk {
 
 message UserRequest {
   string user_id = 1;
+  string scope_type = 2;
+  string scope_id = 3;
 }
 
 message CreateSessionRequest {
   string user_id = 1;
   string title = 2;
+  string scope_type = 3;
+  string scope_id = 4;
 }
 
 message UpdateSessionRequest {
@@ -72,6 +76,8 @@ message Session {
   bool is_active = 4;
   string created_at = 5;
   string updated_at = 6;
+  string scope_type = 7;
+  string scope_id = 8;
 }
 
 message SessionList {
@@ -85,6 +91,8 @@ message GetSessionMessagesRequest {
   string session_id = 2;
   int32 page = 3;
   int32 size = 4;
+  string scope_type = 5;
+  string scope_id = 6;
 }
 
 message ChatMessage {

@@ -152,6 +152,7 @@ message CanvasSessionMessageRequest {
   string provider = 6;
   string model = 7;
   string mode = 8;
+  string selected_context = 9;
 }
 
 message CanvasApplyActionRequest {

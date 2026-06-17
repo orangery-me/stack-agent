@@ -80,6 +80,7 @@ interface CanvasSessionMessageRequest {
   provider?: string;
   model?: string;
   mode?: string;
+  selectedContext?: string;
 }
 
 interface CanvasApplyActionRequest {
@@ -394,6 +395,7 @@ export class AgentGrpcController {
           canvasId: data.canvasId.trim(),
           canvasContent: data.canvasContent ?? '',
           userRequest: data.message.trim(),
+          selectedContext: data.selectedContext?.trim() || undefined,
           provider: data.provider?.trim() || undefined,
           model: data.model?.trim() || undefined,
           sessionId: data.sessionId,

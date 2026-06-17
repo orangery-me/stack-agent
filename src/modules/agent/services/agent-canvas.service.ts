@@ -211,7 +211,7 @@ export class AgentCanvasService {
               blocksJson,
             }),
           },
-          { role: 'user', content: input.userRequest },
+          { role: 'user', content: this.buildUserRequestWithSelectedContext(input.userRequest, input.selectedContext) },
         ];
 
         subscriber.next(this.createEventChunk('status', { message: 'AI is summarizing the canvas...' }));
@@ -247,7 +247,7 @@ export class AgentCanvasService {
             ...message,
             content: message.role === 'assistant' ? this.stripActionTrace(message.content) : message.content,
           })),
-        { role: 'user', content: input.userRequest },
+        { role: 'user', content: this.buildUserRequestWithSelectedContext(input.userRequest, input.selectedContext) },
       ];
 
       subscriber.next(this.createEventChunk('status', { message: 'AI is analyzing the request...' }));
@@ -326,6 +326,21 @@ export class AgentCanvasService {
       chunk: JSON.stringify({ type, ...payload }),
       done: false,
     };
+  }
+
+  private buildUserRequestWithSelectedContext(userRequest: string, selectedContext?: string): string {
+    const context = selectedContext?.trim();
+    if (!context) return userRequest;
+
+    return [
+      userRequest,
+      '',
+      'Selected canvas text context:',
+      '---',
+      context,
+      '---',
+      'Use the selected text as the primary context for this request. Do not quote it back unless necessary.',
+    ].join('\n');
   }
 
   private async buildCanvasSnapshot(canvasId: string, fallbackContent: string, contextLabel: string): Promise<string> {

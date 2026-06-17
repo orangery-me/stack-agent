@@ -32,6 +32,7 @@ export interface CanvasSessionPreviewInput {
   model?: string;
   sessionId: string;
   mode?: string;
+  selectedContext?: string;
 }
 
 export interface AskAgentOutput {

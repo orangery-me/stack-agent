@@ -12,10 +12,12 @@ export interface AiProviderOptions {
 
 /** JSON Schema-compatible parameter definition for a single tool property. */
 export interface ToolParameterSchema {
-  type: string;
+  type: string | string[];
   description?: string;
   enum?: string[];
   items?: ToolParameterSchema;
+  properties?: Record<string, ToolParameterSchema>;
+  required?: string[];
 }
 
 /** A single tool that the AI can call. */

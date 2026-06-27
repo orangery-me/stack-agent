@@ -4,6 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 export interface CanvasBlock {
+  id: string;
   index: number;
   type: string;
   text: string;
@@ -11,7 +12,40 @@ export interface CanvasBlock {
 
 export interface BlockMutationResult {
   ok: boolean;
-  blocks: CanvasBlock[];
+  blocks?: CanvasBlock[];
+  appliedMutationCount?: number;
+  suggestions?: CanvasSuggestion[];
+  createdSuggestionCount?: number;
+}
+
+export type CanvasBlockMutation =
+  | { action: 'replace_text'; block_id: string; new_text: string }
+  | { action: 'replace_block'; block_id: string; new_block: NewCanvasBlock }
+  | { action: 'insert_before' | 'insert_after'; target_block_id?: string | null; new_block: NewCanvasBlock }
+  | { action: 'delete_block'; block_id: string }
+  | { action: 'move_after'; block_id: string; target_block_id?: string | null };
+
+export interface NewCanvasBlock {
+  id?: string;
+  type?: string;
+  content?: string;
+  text?: string;
+}
+
+export interface CanvasSuggestion {
+  id: string;
+  canvasId: string;
+  messageId: string;
+  actionId?: string | null;
+  blockId?: string | null;
+  targetBlockId?: string | null;
+  action: 'replace_text' | 'replace_block' | 'insert_after' | 'insert_before' | 'delete_block';
+  payload: Record<string, unknown>;
+  status: 'pending' | 'applying' | 'accepted' | 'rejected' | 'failed';
+  error?: string | null;
+  createdBy: 'ai' | 'agent';
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CreateTaskPayload extends Record<string, unknown> {
@@ -80,58 +114,21 @@ export class McpClientService {
     }
   }
 
-  async insertBlock(
+  async editCanvasBlocks(
     canvasId: string,
-    content: string,
-    type = 'paragraph',
-    afterIndex?: number,
+    mutations: CanvasBlockMutation[],
+    options: { messageId?: string; actionId?: string } = {}
   ): Promise<BlockMutationResult> {
     const client = await this.createClient();
     try {
-      const args: Record<string, unknown> = { canvas_id: canvasId, content, type };
-      if (afterIndex !== undefined) args['after_index'] = afterIndex;
-      const result = await client.callTool({ name: 'insert_canvas_block', arguments: args });
-      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '{}';
-      return this.parseToolText<BlockMutationResult>(text, '{}');
-    } finally {
-      await client.close();
-    }
-  }
-
-  async updateBlock(canvasId: string, index: number, content: string): Promise<BlockMutationResult> {
-    const client = await this.createClient();
-    try {
       const result = await client.callTool({
-        name: 'update_canvas_block',
-        arguments: { canvas_id: canvasId, index, content },
-      });
-      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '{}';
-      return this.parseToolText<BlockMutationResult>(text, '{}');
-    } finally {
-      await client.close();
-    }
-  }
-
-  async deleteBlock(canvasId: string, index: number): Promise<BlockMutationResult> {
-    const client = await this.createClient();
-    try {
-      const result = await client.callTool({
-        name: 'delete_canvas_block',
-        arguments: { canvas_id: canvasId, index },
-      });
-      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '{}';
-      return this.parseToolText<BlockMutationResult>(text, '{}');
-    } finally {
-      await client.close();
-    }
-  }
-
-  async reorderBlocks(canvasId: string, fromIndex: number, toIndex: number): Promise<BlockMutationResult> {
-    const client = await this.createClient();
-    try {
-      const result = await client.callTool({
-        name: 'reorder_canvas_blocks',
-        arguments: { canvas_id: canvasId, from_index: fromIndex, to_index: toIndex },
+        name: 'edit_canvas_blocks',
+        arguments: {
+          canvas_id: canvasId,
+          mutations,
+          ...(options.messageId ? { message_id: options.messageId } : {}),
+          ...(options.actionId ? { action_id: options.actionId } : {}),
+        },
       });
       const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '{}';
       return this.parseToolText<BlockMutationResult>(text, '{}');

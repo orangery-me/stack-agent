@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { AiChatSessionService } from '../../ai-chat/ai-chat-session.service';
-import { McpClientService } from '../../mcp-client/mcp-client.service';
+import { CanvasBlockMutation, CanvasSuggestion, McpClientService } from '../../mcp-client/mcp-client.service';
 import { AiProviderMessage, ToolDefinition } from '../ai-providers/ai-provider.interface';
 import {
   buildCanvasLegacyWritePrompt,
@@ -29,62 +29,47 @@ type NormalizedCanvasAction = {
 
 const CANVAS_TOOLS: ToolDefinition[] = [
   {
-    name: 'insert_canvas_block',
-    description: 'Insert a new block into the canvas after the given index. Use after_index = -1 to prepend.',
+    name: 'edit_canvas_blocks',
+    description:
+      'Create durable pending canvas edit suggestions using stable block IDs. The user will review and accept/reject each suggestion.',
     parameters: {
       type: 'object',
       properties: {
         canvas_id: { type: 'string', description: 'The canvas document ID' },
-        content: { type: 'string', description: 'Text content of the new block' },
-        type: {
-          type: 'string',
-          enum: ['paragraph', 'heading', 'bulletList', 'orderedList', 'blockquote', 'codeBlock'],
-          description: 'Block node type (default: paragraph)',
+        mutations: {
+          type: 'array',
+          description:
+            'Ordered mutations. Target existing blocks only by block_id/target_block_id from get_canvas_blocks; never by index.',
+          items: {
+            type: 'object',
+            properties: {
+              action: {
+                type: 'string',
+                enum: ['replace_text', 'replace_block', 'insert_before', 'insert_after', 'delete_block'],
+              },
+              block_id: { type: 'string', description: 'Existing block ID for replace/delete' },
+              target_block_id: {
+                type: 'string',
+                description: 'Optional anchor block ID for insert; omit it for document start/end depending on action',
+              },
+              new_text: { type: 'string', description: 'Full replacement text for replace_text' },
+              new_block: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', description: 'Optional new stable block ID' },
+                  type: {
+                    type: 'string',
+                    enum: ['paragraph', 'heading', 'bulletList', 'orderedList', 'blockquote', 'codeBlock'],
+                  },
+                  content: { type: 'string', description: 'Plain text block content' },
+                },
+              },
+            },
+            required: ['action'],
+          },
         },
-        after_index: {
-          type: 'number',
-          description: 'Index of the block to insert after. Use -1 to prepend.',
-        },
       },
-      required: ['canvas_id', 'content'],
-    },
-  },
-  {
-    name: 'update_canvas_block',
-    description: 'Replace the text content of an existing block at the given index.',
-    parameters: {
-      type: 'object',
-      properties: {
-        canvas_id: { type: 'string', description: 'The canvas document ID' },
-        index: { type: 'number', description: 'Zero-based index of the block to update' },
-        content: { type: 'string', description: 'New text content for the block' },
-      },
-      required: ['canvas_id', 'index', 'content'],
-    },
-  },
-  {
-    name: 'delete_canvas_block',
-    description: 'Delete the block at the given index from the canvas.',
-    parameters: {
-      type: 'object',
-      properties: {
-        canvas_id: { type: 'string', description: 'The canvas document ID' },
-        index: { type: 'number', description: 'Zero-based index of the block to delete' },
-      },
-      required: ['canvas_id', 'index'],
-    },
-  },
-  {
-    name: 'reorder_canvas_blocks',
-    description: 'Move a block from one position to another in the canvas.',
-    parameters: {
-      type: 'object',
-      properties: {
-        canvas_id: { type: 'string', description: 'The canvas document ID' },
-        from_index: { type: 'number', description: 'Zero-based index of the block to move' },
-        to_index: { type: 'number', description: 'Zero-based target index' },
-      },
-      required: ['canvas_id', 'from_index', 'to_index'],
+      required: ['canvas_id', 'mutations'],
     },
   },
 ];
@@ -132,10 +117,30 @@ export class AgentCanvasService {
       const toolHistory: AiProviderMessage[] = [...messages];
 
       for (let round = 0; round < maxToolRounds; round++) {
-        const result = await provider.chatWithTools(toolHistory, CANVAS_TOOLS, {
+        let result = await provider.chatWithTools(toolHistory, CANVAS_TOOLS, {
           model: input.model,
           temperature: 0.3,
         });
+
+        if (round === 0 && !result.toolCalls?.length) {
+          const firstContent = result.content?.trim() ?? '';
+          toolHistory.push({
+            role: 'assistant',
+            content: firstContent || 'No tool call was made.',
+          });
+          toolHistory.push({
+            role: 'user',
+            content:
+              'You responded without calling edit_canvas_blocks. If the user requested a canvas edit, call edit_canvas_blocks now using block IDs from the canvas JSON. Do not apologize or chat.',
+          });
+          result = await provider.chatWithTools(toolHistory, CANVAS_TOOLS, {
+            model: input.model,
+            temperature: 0.1,
+          });
+          if (!result.toolCalls?.length && !result.content?.trim() && firstContent) {
+            result = { content: firstContent };
+          }
+        }
 
         if (!result.toolCalls?.length) {
           if (result.content) {
@@ -252,38 +257,84 @@ export class AgentCanvasService {
 
       subscriber.next(this.createEventChunk('status', { message: 'AI is analyzing the request...' }));
 
-      const result = await provider.chatWithTools(messages, CANVAS_TOOLS, {
+      let result = await provider.chatWithTools(messages, CANVAS_TOOLS, {
         model: input.model,
         temperature: 0.2,
       });
 
+      if (!result.toolCalls?.length) {
+        const firstContent = result.content?.trim() ?? '';
+        subscriber.next(this.createEventChunk('status', { message: 'AI is preparing concrete canvas edits...' }));
+        result = await provider.chatWithTools(
+          [
+            ...messages,
+            { role: 'assistant', content: firstContent || 'No tool call was made.' },
+            {
+              role: 'user',
+              content:
+                'You responded without calling edit_canvas_blocks. If the user requested any canvas edit or correction, call edit_canvas_blocks now using exact block IDs. Do not apologize or chat.',
+            },
+          ],
+          CANVAS_TOOLS,
+          {
+            model: input.model,
+            temperature: 0.1,
+          },
+        );
+        if (!result.toolCalls?.length && !result.content?.trim() && firstContent) {
+          result = { content: firstContent };
+        }
+      }
+
       const fallbackParsed = this.extractActionsFromContent(result.content);
       const actionSeed =
         result.toolCalls && result.toolCalls.length > 0
-          ? result.toolCalls.map((toolCall, index) => ({
-              id: `${Date.now()}-${index}`,
-              name: toolCall.name,
-              arguments: toolCall.arguments ?? {},
-              status: 'pending',
-            }))
+          ? await Promise.all(
+              result.toolCalls.map(async (toolCall, index) => {
+                const actionId = `${Date.now()}-${index}`;
+                const args = {
+                  ...(toolCall.arguments ?? {}),
+                  canvas_id: input.canvasId,
+                };
+                const toolResult = await this.executeCanvasTool(toolCall.name, args, {
+                  messageId: input.sessionId,
+                  actionId,
+                });
+                const suggestions = this.extractSuggestions(toolResult);
+                return {
+                  id: actionId,
+                  name: toolCall.name,
+                  arguments: {
+                    ...(toolCall.arguments ?? {}),
+                    canvas_id: input.canvasId,
+                    suggestions,
+                  },
+                  status: suggestions.length > 0 ? 'pending' : 'failed',
+                };
+              })
+            )
           : fallbackParsed.actions;
 
-      const actions = actionSeed.map((action, index) => ({
-        id: action.id || `${Date.now()}-${index}`,
-        name: action.name,
-        arguments: action.arguments ?? {},
-        status: action.status || 'pending',
-      }));
+      const actions = actionSeed
+        .map((action, index) => ({
+          id: action.id || `${Date.now()}-${index}`,
+          name: action.name,
+          arguments: action.arguments ?? {},
+          status: action.status || 'pending',
+        }))
+        .filter((action) => this.isValidCanvasEditAction(action));
 
       if (actions.length > 0) {
         subscriber.next(this.createEventChunk('actions', { actions }));
       }
 
+      const rawAiText = this.stripActionTrace(fallbackParsed.summary || result.content || '');
       const summary =
-        this.stripActionTrace(fallbackParsed.summary || result.content || '') ||
-        (actions.length > 0
-          ? `I have prepared ${actions.length} proposed changes. You can Accept/Reject each action.`
-          : 'I did not find any changes that are suitable to propose on this canvas.');
+        actions.length > 0
+          ? rawAiText
+            ? `${rawAiText}\n\nI have prepared ${actions.length} proposed change(s). Please review and Accept/Reject.`
+            : `I have prepared ${actions.length} proposed change(s). Please review and Accept/Reject.`
+          : rawAiText || 'I did not find any changes that are suitable to propose on this canvas.';
 
       subscriber.next(this.createEventChunk('assistant', { content: summary }));
       subscriber.next({ chunk: '', done: true });
@@ -427,23 +478,28 @@ export class AgentCanvasService {
     };
   }
 
-  private async executeCanvasTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  private isValidCanvasEditAction(action: NormalizedCanvasAction): boolean {
+    if (action.name !== 'edit_canvas_blocks') return false;
+    const mutations = action.arguments?.mutations;
+    return Array.isArray(mutations) && mutations.length > 0;
+  }
+
+  private extractSuggestions(result: unknown): CanvasSuggestion[] {
+    if (!result || typeof result !== 'object') return [];
+    const suggestions = (result as { suggestions?: unknown }).suggestions;
+    return Array.isArray(suggestions) ? (suggestions as CanvasSuggestion[]) : [];
+  }
+
+  private async executeCanvasTool(
+    name: string,
+    args: Record<string, unknown>,
+    options: { messageId?: string; actionId?: string } = {}
+  ): Promise<unknown> {
     const canvasId = args['canvas_id'] as string;
 
     switch (name) {
-      case 'insert_canvas_block':
-        return this.mcpClient.insertBlock(
-          canvasId,
-          args['content'] as string,
-          (args['type'] as string) ?? 'paragraph',
-          args['after_index'] !== undefined ? Number(args['after_index']) : undefined
-        );
-      case 'update_canvas_block':
-        return this.mcpClient.updateBlock(canvasId, Number(args['index']), args['content'] as string);
-      case 'delete_canvas_block':
-        return this.mcpClient.deleteBlock(canvasId, Number(args['index']));
-      case 'reorder_canvas_blocks':
-        return this.mcpClient.reorderBlocks(canvasId, Number(args['from_index']), Number(args['to_index']));
+      case 'edit_canvas_blocks':
+        return this.mcpClient.editCanvasBlocks(canvasId, ((args['mutations'] as any[]) ?? []) as CanvasBlockMutation[], options);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }

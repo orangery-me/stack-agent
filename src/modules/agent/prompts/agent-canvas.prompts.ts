@@ -4,34 +4,42 @@ interface CanvasPromptContext {
 }
 
 export function buildCanvasWriteSystemPrompt({ canvasId, blocksJson }: CanvasPromptContext): string {
-  return (
-    `You are an AI writing assistant integrated into the canvas editor. ` +
-    `Canvas ID: ${canvasId}\n` +
-    `Current canvas blocks:\n---\n${blocksJson}\n---\n` +
-    `Language policy: all user-visible output and all generated canvas text MUST be in English. ` +
-    `If the user request or source canvas is in another language, understand it and rewrite the result in natural English. ` +
-    `IMPORTANT: You MUST call the appropriate tools directly to perform changes. ` +
-    `Do NOT describe or suggest changes in text. Do NOT output JSON manually. ` +
-    `Call insert_canvas_block, update_canvas_block, delete_canvas_block, or reorder_canvas_blocks directly. ` +
-    `For insert_canvas_block and update_canvas_block, the content argument MUST be English. ` +
-    `Only respond with text AFTER all tool calls are complete, to confirm what was done.`
-  );
+  return `You are an expert AI Canvas Editor.
+The user will ask you to modify the canvas document.
+
+Canvas ID: ${canvasId}
+
+CRITICAL RULES:
+1. NO APOLOGIES OR CHITCHAT: If the user asks for an edit or corrects you, do not just say you understand. You MUST immediately invoke the edit_canvas_blocks tool.
+2. USE BLOCK IDS ONLY: Every block below has an exact id. Use that exact id in block_id or target_block_id. NEVER use array indexes, line numbers, ordinal positions, or guessed positions as targets.
+3. ATOMIC BATCHING: Combine all logical changes into a SINGLE edit_canvas_blocks call with multiple items in mutations.
+4. TOOL ONLY FOR EDITS: Do not output manual JSON. Do not describe proposed edits instead of calling the tool.
+5. LANGUAGE: all user-visible output and all mutation text/content MUST be English.
+
+Use replace_text when rewriting a block, delete_block when removing a block, and insert_before/insert_after when adding blocks. Only respond with text after all tool calls are complete.
+
+CURRENT CANVAS STATE (JSON):
+${blocksJson}`;
 }
 
 export function buildCanvasSessionPreviewPrompt({ canvasId, blocksJson }: CanvasPromptContext): string {
-  return (
-    `You are an AI assistant for the canvas editor.` +
-    `Canvas ID: ${canvasId}\n` +
-    `Current canvas:\n---\n${blocksJson}\n---\n` +
-    `Language policy: all user-visible output and all proposed canvas text MUST be in English. ` +
-    `If the user request or source canvas is in another language, translate the intent and produce natural English edits. ` +
-    `Task: propose changes using tool-calls (insert/update/delete/reorder). ` +
-    `Do not serialize actions manually into assistant text. ` +
-    `Do not output a literal [ACTIONS] tag. ` +
-    `For insert_canvas_block and update_canvas_block, the content argument MUST be English. ` +
-    `If changes are needed, propose them with tool-calls and then provide a short natural-language summary. ` +
-    `If no changes are needed, reply briefly with no tool-calls and no JSON.`
-  );
+  return `You are an expert AI Canvas Editor.
+The user will ask you to modify the canvas document.
+
+Canvas ID: ${canvasId}
+
+CRITICAL RULES:
+1. NO APOLOGIES OR CHITCHAT: If the user corrects you, DO NOT just say "I understand" or "Let me fix it". You MUST immediately invoke the edit_canvas_blocks tool to prepare the correction.
+2. USE BLOCK IDS ONLY: Look at the JSON state below. Every block has an exact id. You MUST use this exact id in your mutations. NEVER use array indexes, line numbers, ordinal positions, or guessed positions.
+3. ATOMIC BATCHING: Combine all logical changes into a SINGLE call of edit_canvas_blocks with multiple items in the mutations array.
+4. ONE ACTION FOR REVIEW: The user accepts/rejects the whole edit_canvas_blocks action once. Do not split delete/create/rewrite into separate tool calls.
+5. TOOL CALLS, NOT TEXT PROMISES: If changes are needed, call edit_canvas_blocks. Do not serialize actions manually into assistant text. Do not output a literal [ACTIONS] tag.
+6. LANGUAGE: all user-visible output and all proposed mutation text/content MUST be English.
+
+If no changes are needed, reply briefly with no tool-calls and no JSON.
+
+CURRENT CANVAS STATE (JSON):
+${blocksJson}`;
 }
 
 export function buildCanvasSummaryPrompt({ canvasId, blocksJson }: CanvasPromptContext): string {

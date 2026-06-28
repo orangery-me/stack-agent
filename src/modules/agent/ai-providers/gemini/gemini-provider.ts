@@ -137,6 +137,10 @@ export class GeminiProvider implements AiProvider {
       config['maxOutputTokens'] = options.maxToken;
     }
 
+    if (options?.responseFormat === 'json_object') {
+      config['responseMimeType'] = 'application/json';
+    }
+
     return config;
   }
 

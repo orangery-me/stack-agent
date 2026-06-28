@@ -61,6 +61,8 @@ interface SendMessageRequest {
   message: string;
   provider?: string;
   model?: string;
+  workspaceId?: string;
+  channelId?: string;
 }
 
 interface CanvasWriteRequest {
@@ -108,9 +110,18 @@ interface TaskSessionMessageRequest {
 
 interface TaskApplyActionRequest {
   userId: string;
+  sessionId?: string;
   workspaceId: string;
   channelId?: string;
   taskListId?: string;
+  canvasId?: string;
+  canvasContent?: string;
+  canvasTitle?: string;
+  sourceCanvasUrl?: string;
+  overallDueDate?: string;
+  timezone?: string;
+  provider?: string;
+  model?: string;
   actionName?: string;
   actionArgsJson?: string;
 }
@@ -283,6 +294,9 @@ export class AgentGrpcController {
         provider: data.provider?.trim() || undefined,
         model: data.model?.trim() || undefined,
         sessionId: data.sessionId,
+        userId: data.userId,
+        workspaceId: data.workspaceId?.trim() || undefined,
+        channelId: data.channelId?.trim() || undefined,
       });
 
       const assistantMsg = await this.sessionService.appendAssistantMessage(data.sessionId, result.response);
@@ -318,25 +332,45 @@ export class AgentGrpcController {
         await this.sessionService.appendUserMessage(data.sessionId, data.message.trim());
 
         let fullResponse = '';
+        let assistantSummary = '';
+        let actionTrace = '';
 
         const stream$ = this.agentService.askAgentStream({
           message: data.message.trim(),
           provider: data.provider?.trim() || undefined,
           model: data.model?.trim() || undefined,
           sessionId: data.sessionId,
+          userId: data.userId,
+          workspaceId: data.workspaceId?.trim() || undefined,
+          channelId: data.channelId?.trim() || undefined,
         });
 
         stream$.subscribe({
           next: (chunk) => {
             if (!chunk.done) {
-              fullResponse += chunk.chunk;
+              try {
+                const payload = JSON.parse(chunk.chunk) as { type?: string; content?: string; actions?: unknown[] };
+                if (payload.type === 'assistant' && payload.content) {
+                  assistantSummary += payload.content;
+                } else if (payload.type === 'actions' && payload.actions) {
+                  actionTrace = JSON.stringify(payload.actions);
+                } else {
+                  fullResponse += chunk.chunk;
+                }
+              } catch {
+                fullResponse += chunk.chunk;
+              }
             }
             subscriber.next(chunk);
           },
           complete: async () => {
             // Persist the final assistant reply
-            if (fullResponse) {
-              await this.sessionService.appendAssistantMessage(data.sessionId, fullResponse).catch(console.error);
+            const finalMessage = assistantSummary.trim() || fullResponse.trim();
+            const traceSuffix = actionTrace ? `\n\n[ACTIONS]\n${actionTrace}` : '';
+            if (finalMessage || traceSuffix) {
+              await this.sessionService
+                .appendAssistantMessage(data.sessionId, `${finalMessage}${traceSuffix}`)
+                .catch(console.error);
             }
             subscriber.complete();
           },
@@ -571,6 +605,84 @@ export class AgentGrpcController {
         error: err?.message ?? 'Failed to apply action',
       };
     }
+  }
+
+  @GrpcMethod('AgentService', 'TaskApplyActionStream')
+  taskApplyActionStream(data: TaskApplyActionRequest): Observable<AskAgentStreamChunk> {
+    this.requireUserId(data.userId);
+    this.requireSessionId(data.sessionId ?? '');
+    if (!data?.workspaceId?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'workspaceId is required' });
+    }
+    if (!data?.actionName?.trim()) {
+      throw new RpcException({ code: GrpcStatus.INVALID_ARGUMENT, message: 'actionName is required' });
+    }
+
+    return new Observable((subscriber) => {
+      (async () => {
+        const session = await this.sessionService.getSessionForUser(data.userId, data.sessionId!);
+        if (!session) {
+          subscriber.error(new RpcException({ code: GrpcStatus.NOT_FOUND, message: 'Session not found' }));
+          return;
+        }
+        if ((session.scopeType || 'general') === 'canvas' && session.scopeId !== (data.canvasId?.trim() || null)) {
+          subscriber.error(
+            new RpcException({ code: GrpcStatus.PERMISSION_DENIED, message: 'Session does not belong to this canvas' })
+          );
+          return;
+        }
+
+        const parsedArgs = data.actionArgsJson?.trim() ? JSON.parse(data.actionArgsJson) : {};
+        let assistantSummary = '';
+        let actionTrace = '';
+        const stream$ = this.agentService.taskApplyActionStream({
+          userId: data.userId,
+          sessionId: data.sessionId!,
+          workspaceId: data.workspaceId.trim(),
+          channelId: data.channelId?.trim() || undefined,
+          taskListId: data.taskListId?.trim() || undefined,
+          canvasId: data.canvasId?.trim() || undefined,
+          canvasContent: data.canvasContent ?? '',
+          canvasTitle: data.canvasTitle?.trim() || undefined,
+          sourceCanvasUrl: data.sourceCanvasUrl?.trim() || undefined,
+          overallDueDate: data.overallDueDate?.trim() || undefined,
+          timezone: data.timezone?.trim() || undefined,
+          provider: data.provider?.trim() || undefined,
+          model: data.model?.trim() || undefined,
+          actionName: data.actionName!.trim(),
+          actionArgs: parsedArgs as Record<string, unknown>,
+        });
+
+        stream$.subscribe({
+          next: (chunk) => {
+            if (!chunk.done && chunk.chunk) {
+              try {
+                const payload = JSON.parse(chunk.chunk) as { type?: string; content?: string; actions?: unknown[] };
+                if (payload.type === 'assistant' && payload.content) {
+                  assistantSummary += payload.content;
+                } else if (payload.type === 'actions' && payload.actions) {
+                  actionTrace = JSON.stringify(payload.actions);
+                }
+              } catch {
+                // Ignore non-json event payloads
+              }
+            }
+            subscriber.next(chunk);
+          },
+          complete: async () => {
+            const finalMessage = assistantSummary.trim();
+            const traceSuffix = actionTrace ? `\n\n[ACTIONS]\n${actionTrace}` : '';
+            if (finalMessage || traceSuffix) {
+              await this.sessionService
+                .appendAssistantMessage(data.sessionId!, `${finalMessage}${traceSuffix}`)
+                .catch(console.error);
+            }
+            subscriber.complete();
+          },
+          error: (err) => subscriber.error(err),
+        });
+      })().catch((err) => subscriber.error(err));
+    });
   }
 
   // ---- Helpers ----

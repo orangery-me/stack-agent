@@ -4,9 +4,15 @@ import { AiChatSessionService } from '../../ai-chat/ai-chat-session.service';
 import { McpClientService } from '../../mcp-client/mcp-client.service';
 import { AiProviderMessage, ToolDefinition } from '../ai-providers/ai-provider.interface';
 import { buildTaskSessionPreviewPrompt } from '../prompts/agent-task.prompts';
-import { AskAgentStreamChunk, TaskApplyActionInput, TaskSessionPreviewInput } from '../shared/agent.types';
+import {
+  AskAgentStreamChunk,
+  TaskApplyActionInput,
+  TaskApplyActionStreamInput,
+  TaskSessionPreviewInput,
+} from '../shared/agent.types';
 import { createAsyncStream } from '../utils/agent-stream.utils';
 import { AgentProviderService } from './agent-provider.service';
+import { AgentToolLoopService } from './agent-tool-loop.service';
 
 interface ParsedTaskAction {
   id?: string;
@@ -25,6 +31,7 @@ type NormalizedTaskAction = {
 const TASK_TOOLS: ToolDefinition[] = [
   {
     name: 'create_task',
+    requireConfirmation: true,
     description: 'Create a single task in a task list.',
     parameters: {
       type: 'object',
@@ -43,6 +50,7 @@ const TASK_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'create_tasks_batch',
+    requireConfirmation: true,
     description: 'Create multiple tasks in one request.',
     parameters: {
       type: 'object',
@@ -62,6 +70,7 @@ const TASK_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'create_task_list_with_tasks',
+    requireConfirmation: true,
     description: 'Create a new task list and multiple tasks from a reviewed canvas task-generation action.',
     parameters: {
       type: 'object',
@@ -73,7 +82,11 @@ const TASK_TOOLS: ToolDefinition[] = [
         source_canvas_title: { type: 'string', description: 'Source canvas title' },
         source_canvas_url: { type: 'string', description: 'Source canvas URL' },
         overall_due_date: { type: 'string', description: 'Overall due date in ISO 8601 format' },
-        default_assignee: { type: 'string', enum: ['creator'], description: 'Always assign generated tasks to creator' },
+        default_assignee: {
+          type: 'string',
+          enum: ['creator'],
+          description: 'Always assign generated tasks to creator',
+        },
         tasks: {
           type: 'array',
           items: { type: 'object' },
@@ -85,6 +98,7 @@ const TASK_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'list_task_lists',
+    requireConfirmation: false,
     description: 'List task lists that the acting user can target.',
     parameters: {
       type: 'object',
@@ -96,7 +110,30 @@ const TASK_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'list_tasks',
+    requireConfirmation: false,
+    description: 'List task items inside a task list with status, priority, due date, creator, and assignees.',
+    parameters: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        task_list_id: { type: 'string', description: 'Task list ID' },
+        status: { type: 'string', enum: ['todo', 'in_progress', 'done'], description: 'Optional task status filter' },
+        priority: {
+          type: 'string',
+          enum: ['low', 'medium', 'high', 'urgent'],
+          description: 'Optional priority filter',
+        },
+        assignee_id: { type: 'string', description: 'Optional workspace member ID filter' },
+        page: { type: 'number', description: 'Page number' },
+        size: { type: 'number', description: 'Page size' },
+      },
+      required: ['workspace_id', 'task_list_id'],
+    },
+  },
+  {
     name: 'search_workspace_members',
+    requireConfirmation: false,
     description: 'Search workspace members by name/email for assignee resolution.',
     parameters: {
       type: 'object',
@@ -109,6 +146,42 @@ const TASK_TOOLS: ToolDefinition[] = [
       required: ['workspace_id', 'query'],
     },
   },
+  {
+    name: 'query_tasks',
+    requireConfirmation: false,
+    description: 'Query tasks in a channel for workload/progress analysis.',
+    parameters: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        channel_id: { type: 'string', description: 'Channel ID' },
+        status: { type: 'string', enum: ['todo', 'in_progress', 'done'], description: 'Optional task status filter' },
+        is_overdue: { type: 'boolean', description: 'Only return non-done tasks past due date' },
+      },
+      required: ['workspace_id', 'channel_id'],
+    },
+  },
+  {
+    name: 'send_channel_message',
+    requireConfirmation: true,
+    description:
+      'Send a Markdown text message to a channel as the acting user. Requires user confirmation. Use mentions only after resolving users with search_workspace_members.',
+    parameters: {
+      type: 'object',
+      properties: {
+        workspace_id: { type: 'string', description: 'Workspace ID' },
+        channel_id: { type: 'string', description: 'Channel ID' },
+        message: { type: 'string', description: 'Message content to send' },
+        mentions: {
+          type: 'array',
+          description:
+            'Resolved users to mention. Use only values returned by search_workspace_members. Message must contain matching @name or @email tokens.',
+          items: { type: 'object' },
+        },
+      },
+      required: ['workspace_id', 'channel_id', 'message'],
+    },
+  },
 ];
 
 @Injectable()
@@ -117,6 +190,7 @@ export class AgentTaskService {
     private readonly providerService: AgentProviderService,
     private readonly aiChatSessionService: AiChatSessionService,
     private readonly mcpClient: McpClientService,
+    private readonly toolLoop: AgentToolLoopService
   ) {}
 
   taskSessionPreviewStream(input: TaskSessionPreviewInput): Observable<AskAgentStreamChunk> {
@@ -127,7 +201,7 @@ export class AgentTaskService {
         subscriber.next(
           this.createEventChunk('assistant', {
             content: 'The current provider does not support task action proposal mode.',
-          }),
+          })
         );
         subscriber.next({ chunk: '', done: true });
         subscriber.complete();
@@ -174,20 +248,20 @@ export class AgentTaskService {
       ];
 
       subscriber.next(this.createEventChunk('status', { message: 'AI is analyzing task request...' }));
-      const result = await provider.chatWithTools(messages, TASK_TOOLS, {
+      const result = await this.toolLoop.run({
+        provider,
+        messages,
+        tools: TASK_TOOLS,
         model: input.model,
         temperature: 0.2,
+        normalizeToolArguments: (name, args) => this.normalizeActionArguments(args, input),
+        executeTool: (name, args) => this.executeTaskTool(name, args),
       });
 
       const fallbackParsed = this.extractActionsFromContent(result.content);
       const actionSeed =
-        result.toolCalls && result.toolCalls.length > 0
-          ? result.toolCalls.map((toolCall, index) => ({
-              id: `${Date.now()}-${index}`,
-              name: toolCall.name,
-              arguments: toolCall.arguments ?? {},
-              status: 'pending',
-            }))
+        result.actions && result.actions.length > 0
+          ? result.actions
           : fallbackParsed.actions;
 
       const actions = actionSeed.map((action, index) => ({
@@ -215,7 +289,82 @@ export class AgentTaskService {
 
   async applyTaskAction(input: TaskApplyActionInput): Promise<unknown> {
     const args = this.normalizeActionArguments(input.actionArgs, input);
-    switch (input.actionName) {
+    return this.executeTaskTool(input.actionName, args);
+  }
+
+  taskApplyActionStream(input: TaskApplyActionStreamInput): Observable<AskAgentStreamChunk> {
+    return createAsyncStream(async (subscriber) => {
+      const { provider } = this.providerService.resolveProvider(input.provider);
+      if (!provider.chatWithTools) {
+        subscriber.next(this.createEventChunk('status', { message: 'Provider does not support tool-calling mode.' }));
+        subscriber.next({ chunk: '', done: true });
+        subscriber.complete();
+        return;
+      }
+
+      subscriber.next(this.createEventChunk('status', { message: 'Executing approved action...' }));
+      const args = this.normalizeActionArguments(input.actionArgs, input);
+      const actionResult = await this.executeTaskTool(input.actionName, args);
+
+      const history = await this.aiChatSessionService.buildContextMessages(input.sessionId);
+      const messages: AiProviderMessage[] = [
+        {
+          role: 'system',
+          content: buildTaskSessionPreviewPrompt({
+            workspaceId: input.workspaceId,
+            channelId: input.channelId,
+            taskListId: input.taskListId,
+            canvasId: input.canvasId,
+            canvasTitle: input.canvasTitle,
+            sourceCanvasUrl: input.sourceCanvasUrl,
+            overallDueDate: input.overallDueDate,
+            timezone: input.timezone,
+            canvasBlocksJson: input.canvasContent?.trim() || '',
+          }),
+        },
+        ...history
+          .filter((message) => message.role !== 'system')
+          .map((message) => ({
+            ...message,
+            content: this.stripActionTrace(message.content),
+          })),
+        {
+          role: 'user',
+          content:
+            `The user approved and the backend executed this action:\n` +
+            `${JSON.stringify({ tool: input.actionName, arguments: args, result: actionResult }, null, 2)}\n\n` +
+            `Continue the original request. If the action completed the request, provide a concise final answer. ` +
+            `Only call another tool if more data is required.`,
+        },
+      ];
+
+      subscriber.next(this.createEventChunk('status', { message: 'AI is continuing after the approved action...' }));
+      const result = await this.toolLoop.run({
+        provider,
+        messages,
+        tools: TASK_TOOLS,
+        model: input.model,
+        temperature: 0.2,
+        normalizeToolArguments: (name, rawArgs) => this.normalizeActionArguments(rawArgs, input),
+        executeTool: (name, rawArgs) => this.executeTaskTool(name, rawArgs),
+      });
+
+      if (result.actions.length > 0) {
+        subscriber.next(this.createEventChunk('actions', { actions: result.actions }));
+      }
+
+      subscriber.next(
+        this.createEventChunk('assistant', {
+          content: result.content || 'The approved action was completed.',
+        })
+      );
+      subscriber.next({ chunk: '', done: true });
+      subscriber.complete();
+    });
+  }
+
+  private async executeTaskTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+    switch (name) {
       case 'create_task':
         return this.mcpClient.createTask(args as any);
       case 'create_tasks_batch':
@@ -224,10 +373,16 @@ export class AgentTaskService {
         return this.mcpClient.createTaskListWithTasks(args as any);
       case 'list_task_lists':
         return this.mcpClient.listTaskLists(args as any);
+      case 'list_tasks':
+        return this.mcpClient.listTasks(args as any);
       case 'search_workspace_members':
         return this.mcpClient.searchWorkspaceMembers(args as any);
+      case 'query_tasks':
+        return this.mcpClient.queryTasks(args as any);
+      case 'send_channel_message':
+        return this.mcpClient.sendChannelMessage(args as any);
       default:
-        throw new Error(`Unknown task action: ${input.actionName}`);
+        throw new Error(`Unknown task action: ${name}`);
     }
   }
 
@@ -242,7 +397,7 @@ export class AgentTaskService {
       canvasTitle?: string;
       sourceCanvasUrl?: string;
       overallDueDate?: string;
-    },
+    }
   ): Record<string, unknown> {
     return {
       ...rawArgs,

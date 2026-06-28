@@ -3,6 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
+export interface McpToolPolicy {
+  name: string;
+  requireConfirmation: boolean;
+}
+
 export interface CanvasBlock {
   id: string;
   index: number;
@@ -60,9 +65,53 @@ export interface CreateTaskPayload extends Record<string, unknown> {
   assignee_ids?: string[];
 }
 
+export interface QueryTasksPayload extends Record<string, unknown> {
+  workspace_id: string;
+  channel_id: string;
+  acting_user_id: string;
+  status?: string;
+  is_overdue?: boolean;
+}
+
+export interface SendChannelMessagePayload extends Record<string, unknown> {
+  workspace_id: string;
+  channel_id: string;
+  acting_user_id: string;
+  message: string;
+  mentions?: Array<{
+    userId?: string;
+    workspaceMemberId?: string;
+    name?: string;
+    email?: string;
+  }>;
+}
+
+export interface ListTasksPayload extends Record<string, unknown> {
+  workspace_id: string;
+  task_list_id: string;
+  acting_user_id: string;
+  status?: string;
+  priority?: string;
+  assignee_id?: string;
+  page?: number;
+  size?: number;
+}
+
 @Injectable()
 export class McpClientService {
   private readonly mcpUrl: string;
+  private readonly fallbackToolPolicies = new Map<string, boolean>([
+    ['get_canvas_blocks', false],
+    ['list_task_lists', false],
+    ['list_tasks', false],
+    ['search_workspace_members', false],
+    ['query_tasks', false],
+    ['create_task', true],
+    ['create_tasks_batch', true],
+    ['create_task_list_with_tasks', true],
+    ['send_channel_message', true],
+    ['edit_canvas_blocks', true],
+  ]);
 
   constructor(private readonly config: ConfigService) {
     const rawUrl = this.config.get<string>('MCP_URL', 'http://127.0.0.1:8105/api/mcp');
@@ -207,6 +256,17 @@ export class McpClientService {
     }
   }
 
+  async listTasks(payload: ListTasksPayload): Promise<unknown> {
+    const client = await this.createClient();
+    try {
+      const result = await client.callTool({ name: 'list_tasks', arguments: payload });
+      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '{}';
+      return this.parseToolText<unknown>(text, '{}');
+    } finally {
+      await client.close();
+    }
+  }
+
   async searchWorkspaceMembers(payload: {
     workspace_id: string;
     acting_user_id: string;
@@ -225,6 +285,63 @@ export class McpClientService {
     } finally {
       await client.close();
     }
+  }
+
+  async queryTasks(payload: QueryTasksPayload): Promise<unknown[]> {
+    const client = await this.createClient();
+    try {
+      const result = await client.callTool({ name: 'query_tasks', arguments: payload });
+      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '[]';
+      return this.parseToolText<unknown[]>(text, '[]');
+    } finally {
+      await client.close();
+    }
+  }
+
+  async sendChannelMessage(payload: SendChannelMessagePayload): Promise<unknown> {
+    const client = await this.createClient();
+    try {
+      const result = await client.callTool({ name: 'send_channel_message', arguments: payload });
+      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '{}';
+      return this.parseToolText<unknown>(text, '{}');
+    } finally {
+      await client.close();
+    }
+  }
+
+  async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+    const client = await this.createClient();
+    try {
+      const result = await client.callTool({ name, arguments: args });
+      const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? 'null';
+      return this.parseToolText<unknown>(text, 'null');
+    } finally {
+      await client.close();
+    }
+  }
+
+  async listToolsWithPolicy(): Promise<McpToolPolicy[]> {
+    const client = await this.createClient();
+    try {
+      const result = await client.listTools();
+      return (result.tools ?? []).map((tool: any) => {
+        const metaPolicy = tool?._meta?.stack?.require_confirmation;
+        const requireConfirmation =
+          typeof metaPolicy === 'boolean'
+            ? metaPolicy
+            : (this.fallbackToolPolicies.get(tool.name) ?? true);
+        return { name: tool.name, requireConfirmation };
+      });
+    } finally {
+      await client.close();
+    }
+  }
+
+  getFallbackToolPolicy(name: string): McpToolPolicy {
+    return {
+      name,
+      requireConfirmation: this.fallbackToolPolicies.get(name) ?? true,
+    };
   }
 
   /**

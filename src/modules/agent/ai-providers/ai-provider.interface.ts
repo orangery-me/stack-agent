@@ -8,6 +8,7 @@ export interface AiProviderOptions {
   temperature?: number;
   maxToken?: number;
   stream?: boolean;
+  responseFormat?: 'json_object';
 }
 
 /** JSON Schema-compatible parameter definition for a single tool property. */
@@ -24,6 +25,7 @@ export interface ToolParameterSchema {
 export interface ToolDefinition {
   name: string;
   description: string;
+  requireConfirmation?: boolean;
   parameters: {
     type: 'object';
     properties: Record<string, ToolParameterSchema>;

@@ -14,6 +14,9 @@ export interface AskAgentInput {
   model?: string;
   /** If provided, messages from this session will be used as context */
   sessionId?: string;
+  userId?: string;
+  workspaceId?: string;
+  channelId?: string;
 }
 
 export interface CanvasWriteInput {
@@ -68,4 +71,16 @@ export interface TaskApplyActionInput {
   taskListId?: string;
   actionName: string;
   actionArgs: Record<string, unknown>;
+}
+
+export interface TaskApplyActionStreamInput extends TaskApplyActionInput {
+  sessionId: string;
+  canvasId?: string;
+  canvasContent?: string;
+  canvasTitle?: string;
+  sourceCanvasUrl?: string;
+  overallDueDate?: string;
+  timezone?: string;
+  provider?: string;
+  model?: string;
 }

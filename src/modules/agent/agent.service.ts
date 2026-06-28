@@ -9,6 +9,7 @@ import {
   AskAgentStreamChunk,
   CanvasSessionPreviewInput,
   TaskApplyActionInput,
+  TaskApplyActionStreamInput,
   TaskSessionPreviewInput,
   CanvasWriteInput,
 } from './shared/agent.types';
@@ -49,6 +50,10 @@ export class AgentService {
     return this.taskService.applyTaskAction(input);
   }
 
+  taskApplyActionStream(input: TaskApplyActionStreamInput): Observable<AskAgentStreamChunk> {
+    return this.taskService.taskApplyActionStream(input);
+  }
+
   canvasWriteStreamLegacy(input: CanvasWriteInput): Observable<AskAgentStreamChunk> {
     return this.canvasService.canvasWriteStreamLegacy(input);
   }
@@ -60,6 +65,7 @@ export {
   AskAgentStreamChunk,
   CanvasSessionPreviewInput,
   TaskApplyActionInput,
+  TaskApplyActionStreamInput,
   TaskSessionPreviewInput,
   CanvasWriteInput,
 } from './shared/agent.types';

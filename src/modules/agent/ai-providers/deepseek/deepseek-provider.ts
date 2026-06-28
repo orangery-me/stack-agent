@@ -33,6 +33,7 @@ export class DeepseekProvider implements AiProvider {
       messages: this.buildMessages(messages),
       temperature: options?.temperature ?? 0.7,
       ...(options?.maxToken ? { max_tokens: options.maxToken } : {}),
+      ...(options?.responseFormat === 'json_object' ? { response_format: { type: 'json_object' } } : {}),
       stream: false,
     });
 
@@ -92,6 +93,7 @@ export class DeepseekProvider implements AiProvider {
         tool_choice: 'auto',
         temperature: options?.temperature ?? 0.7,
         ...(options?.maxToken ? { max_tokens: options.maxToken } : {}),
+        ...(options?.responseFormat === 'json_object' ? { response_format: { type: 'json_object' } } : {}),
         stream: false,
       });
 

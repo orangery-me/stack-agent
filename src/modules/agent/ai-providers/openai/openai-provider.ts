@@ -35,6 +35,7 @@ export class OpenaiProvider implements AiProvider {
     const data = await this.requestResponses<OpenAiResponseData>({
       model: this.resolveModel(options),
       input: this.buildChatInput(messages),
+      ...(options?.responseFormat === 'json_object' ? { text: { format: { type: 'json_object' } } } : {}),
       stream: false,
     });
 
@@ -89,6 +90,7 @@ export class OpenaiProvider implements AiProvider {
         input: this.buildToolInput(messages),
         tools: this.buildToolDefinitions(tools),
         tool_choice: 'auto',
+        ...(options?.responseFormat === 'json_object' ? { text: { format: { type: 'json_object' } } } : {}),
         stream: false,
       });
 

@@ -126,7 +126,7 @@ export class AgentCoordinationService {
   private async buildStructuredResponse(input: AskAgentInput): Promise<StructuredAssistantResponse> {
     if (!input.workspaceId || !input.channelId || !input.userId) {
       return {
-        answer: 'Không đủ ngữ cảnh workspace/channel để xử lý yêu cầu này.',
+        answer: 'There is not enough workspace/channel context to handle this request.',
         suggested_actions: [],
         actions: [],
       };
@@ -206,10 +206,10 @@ export class AgentCoordinationService {
   private normalizeStructuredResponse(content: string): StructuredAssistantResponse {
     const parsed = parseJsonObject(content);
     if (!parsed) {
-      return { answer: content || 'Không có phản hồi từ AI.', suggested_actions: [], actions: [] };
+      return { answer: content || 'No response from AI.', suggested_actions: [], actions: [] };
     }
 
-    const answer = String(parsed.answer ?? '').trim() || 'Không có phản hồi từ AI.';
+    const answer = String(parsed.answer ?? '').trim() || 'No response from AI.';
     const suggestedActions = this.normalizeSuggestedActions(parsed.suggested_actions);
     const actions = [
       ...this.normalizeReviewableActions(parsed.actions),
@@ -254,7 +254,7 @@ export class AgentCoordinationService {
       .map((action, index) => ({
         id: `send-channel-message-${Date.now()}-${index}`,
         name: 'send_channel_message',
-        label: typeof action.label === 'string' ? action.label : 'Gửi nhắc nhở vào channel',
+        label: typeof action.label === 'string' ? action.label : 'Send reminder to channel',
         arguments: {
           message:
             typeof action.message === 'string' && action.message.trim()
@@ -269,7 +269,7 @@ export class AgentCoordinationService {
   }
 
   private defaultActionLabel(name: unknown): string {
-    return name === 'send_channel_message' ? 'Gửi nhắc nhở vào channel' : String(name || 'Action');
+    return name === 'send_channel_message' ? 'Send reminder to channel' : String(name || 'Action');
   }
 
   private normalizeToolArguments(rawArgs: Record<string, unknown>, input: AskAgentInput): Record<string, unknown> {
